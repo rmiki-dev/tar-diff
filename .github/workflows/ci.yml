@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Successful test
-        run: echo "The job was automatically triggered by a ${{ github.push }} event."
+        run: echo "The job was automatically triggered by a ${{ github.event_name }} event."
   test-makefile:
     name: build and test makefile
     runs-on: ubuntu-latest
