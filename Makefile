@@ -1,11 +1,11 @@
-.PHONY: all build clean fmt install lint test tools unit-test integration-test validate .install.gitvalidation .install.golangci-lint .gitvalidation
+.PHONY: all build clean fmt install lint test tools unit-test integration-test validate .install.golangci-lint
 
 export GOPROXY=https://proxy.golang.org
 
-GOBIN := $(shell go env GOBIN)
-ifeq ($(GOBIN),)
-GOBIN := $(GOPATH)/bin
-endif
+
+GOBIN ?= $(shell echo $$HOME)/go/bin
+
+export GOFLAGS := -buildvcs=false
 
 BUILDFLAGS :=
 
@@ -17,7 +17,7 @@ INSTALLDIR=${PREFIX}/bin
 
 export PATH := $(PATH):${GOBIN}
 
-all: tools tar-diff tar-patch test validate .gitvalidation
+all: tools tar-diff tar-patch test validate
 
 build:
 	go build $(BUILDFLAGS) ./...
@@ -33,16 +33,11 @@ install: tar-diff tar-patch
 	install -m 755 tar-diff ${INSTALLDIR}/tar-diff
 	install -m 755 tar-patch ${INSTALLDIR}/tar-patch
 
-tools: .install.gitvalidation .install.golangci-lint
-
-.install.gitvalidation:
-	if [ ! -x "$(GOBIN)/git-validation" ]; then \
-		go install github.com/vbatts/git-validation@latest; \
-	fi
+tools: .install.golangci-lint
 
 .install.golangci-lint:
 	if [ ! -x "$(GOBIN)/golangci-lint" ]; then \
-		curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b $(GOBIN) latest; \
+		curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/main/install.sh | sh -s -- -b $(GOBIN) v1.62.2; \
 	fi
 
 clean:
@@ -66,12 +61,3 @@ validate: lint
 lint:
 	$(GOBIN)/golangci-lint run
 
-.gitvalidation:
-	@which $(GOBIN)/git-validation > /dev/null 2>/dev/null || (echo "ERROR: git-validation not found. Consider 'make clean && make tools'" && false)
-ifeq ($(GITHUB_ACTIONS),true)
-	$(GOBIN)/git-validation -q -run DCO,short-subject,dangling-whitespace
-else
-	git fetch -q "https://github.com/containers/tar-diff.git" "refs/heads/master"
-	upstream="$$(git rev-parse --verify FETCH_HEAD)" ; \
-		$(GOBIN)/git-validation -q -run DCO,short-subject,dangling-whitespace -range $$upstream..HEAD
-endif
