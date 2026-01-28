@@ -38,6 +38,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Install dependencies (using dnf, Fedora's package manager)
         run: |
           dnf update -y
