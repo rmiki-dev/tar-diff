@@ -2,10 +2,7 @@
 
 export GOPROXY=https://proxy.golang.org
 
-GOBIN := $(shell go env GOBIN)
-ifeq ($(GOBIN),)
-GOBIN := $(GOPATH)/bin
-endif
+GOBIN ?= $(shell echo $$HOME)/go/bin
 
 BUILDFLAGS :=
 
@@ -42,7 +39,7 @@ tools: .install.gitvalidation .install.golangci-lint
 
 .install.golangci-lint:
 	if [ ! -x "$(GOBIN)/golangci-lint" ]; then \
-		curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b $(GOBIN) latest; \
+		curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b $(GOBIN) v1.62.2; \
 	fi
 
 clean:
