@@ -8,7 +8,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"io"
-	"io/ioutil"
 
 	"github.com/containers/image/v5/pkg/compression"
 )
@@ -33,7 +32,7 @@ func (g *deltaGenerator) setSkip(ignore bool) {
 // Skip the rest of the current file from the tarfile
 func (g *deltaGenerator) skipRest() error {
 	g.setSkip(true)
-	_, err := io.Copy(ioutil.Discard, g.tarReader)
+	_, err := io.Copy(io.Discard, g.tarReader)
 	return err
 }
 
@@ -48,14 +47,14 @@ func (g *deltaGenerator) readN(n int64) ([]byte, error) {
 // Copy the rest of the current file from the tarfile into the delta
 func (g *deltaGenerator) copyRest() error {
 	g.setSkip(false)
-	_, err := io.Copy(ioutil.Discard, g.tarReader)
+	_, err := io.Copy(io.Discard, g.tarReader)
 	return err
 }
 
 // Copy the next n bytes of the current file from the tarfile into the delta
 func (g *deltaGenerator) copyN(n int64) error {
 	g.setSkip(false)
-	_, err := io.CopyN(ioutil.Discard, g.tarReader, int64(n))
+	_, err := io.CopyN(io.Discard, g.tarReader, int64(n))
 	return err
 }
 
@@ -232,7 +231,7 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 		}
 	}
 	// Steal any remaining data left by tar reader
-	if _, err := io.Copy(ioutil.Discard, stealingTarFile); err != nil {
+	if _, err := io.Copy(io.Discard, stealingTarFile); err != nil {
 		return err
 	}
 	// Flush any outstanding stolen data
