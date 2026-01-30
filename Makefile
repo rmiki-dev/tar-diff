@@ -70,8 +70,12 @@ lint:
 .gitvalidation:
 	@which $(GOBIN)/git-validation > /dev/null 2>/dev/null || (echo "ERROR: git-validation not found. Consider 'make clean && make tools'" && false)
 	@{ \
-	  if [ -n "$(GITHUB_SHA)" ]; then SHA="$(GITHUB_SHA)"; else SHA="HEAD"; fi; \
-	  if git rev-parse -q --verify "$$SHA^" >/dev/null 2>&1; then RANGE="$$SHA^..$$SHA"; else RANGE="$$SHA"; fi; \
+	  if [ -n "$(COMMIT_RANGE)" ]; then \
+	    RANGE="$(COMMIT_RANGE)"; \
+	  else \
+	    if [ -n "$(GITHUB_SHA)" ]; then SHA="$(GITHUB_SHA)"; else SHA="HEAD"; fi; \
+	    if git rev-parse -q --verify "$$SHA^" >/dev/null 2>&1; then RANGE="$$SHA^..$$SHA"; else RANGE="$$SHA"; fi; \
+	  fi; \
 	  echo "using commit range: $$RANGE"; \
 	  $(GOBIN)/git-validation -run DCO,short-subject,dangling-whitespace -range $$RANGE; \
 	}
