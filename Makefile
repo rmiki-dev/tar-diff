@@ -2,7 +2,7 @@
 
 export GOPROXY=https://proxy.golang.org
 
-#Disables VCS stamp to stop query of git metadata causing test failture
+#Disables VCS stamp to stop query of git metadata causing test failure
 export GOFLAGS=-buildvcs=false
 
 GOBIN ?= $(shell echo $$HOME)/go/bin
@@ -70,9 +70,7 @@ lint:
 .gitvalidation:
 	@which $(GOBIN)/git-validation > /dev/null 2>/dev/null || (echo "ERROR: git-validation not found. Consider 'make clean && make tools'" && false)
 	@{ \
-	  if [ -n "$(HEAD_SHA)" ]; then SHA="$(HEAD_SHA)"; \
-	  elif [ -n "$(GITHUB_SHA)" ]; then SHA="$(GITHUB_SHA)"; \
-	  else SHA="HEAD"; fi; \
+	  if [ -n "$(GITHUB_SHA)" ]; then SHA="$(GITHUB_SHA)"; else SHA="HEAD"; fi; \
 	  if git rev-parse -q --verify "$$SHA^" >/dev/null 2>&1; then RANGE="$$SHA^..$$SHA"; else RANGE="$$SHA"; fi; \
 	  echo "using commit range: $$RANGE"; \
 	  $(GOBIN)/git-validation -run DCO,short-subject,dangling-whitespace -range $$RANGE; \
