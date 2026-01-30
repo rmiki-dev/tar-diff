@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
@@ -42,18 +42,18 @@ jobs:
       image: quay.io/fedora/fedora:latest
       options: --user root
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
-      - name: Set commit refs for git-validation
-        run: |
-          echo "HEAD_SHA=${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV
-          echo "GITHUB_SHA=${{ github.sha }}" >> $GITHUB_ENV
       - name: Install dependencies (using dnf, Fedora's package manager)
         run: |
           dnf update -y
           dnf install -y golang make tar diffutils bzip2 gzip curl git which
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set commit refs for git-validation
+        run: |
+          echo "HEAD_SHA=${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV
+          echo "GITHUB_SHA=${{ github.sha }}" >> $GITHUB_ENV
       - name: Build and test
         run: make
 
