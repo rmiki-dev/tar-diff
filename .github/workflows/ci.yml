@@ -46,6 +46,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Set commit refs for git-validation
+        run: |
+          echo "HEAD_SHA=${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV
+          echo "GITHUB_SHA=${{ github.sha }}" >> $GITHUB_ENV
       - name: Install dependencies (using dnf, Fedora's package manager)
         run: |
           dnf update -y
