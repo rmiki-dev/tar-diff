@@ -65,14 +65,8 @@ lint:
 
 .gitvalidation:
 	@which $(GOBIN)/git-validation > /dev/null 2>/dev/null || (echo "ERROR: git-validation not found. Consider 'make clean && make tools'" && false)
-ifneq ($(GITHUB_ACTIONS),true)
-	git fetch -q "https://github.com/containers/tar-diff.git" "refs/heads/master"
-	upstream="$$(git rev-parse --verify FETCH_HEAD)" ; \
-		$(GOBIN)/git-validation -q -run DCO,short-subject,dangling-whitespace -range $$upstream..HEAD
+ifdef GITHUB_SHA
+	$(GOBIN)/git-validation -q -run DCO,short-subject,dangling-whitespace -range $(GITHUB_SHA)^..$(GITHUB_SHA)
 else
-ifneq ($(PR_BASE_SHA),)
-	$(GOBIN)/git-validation -q -run DCO,short-subject,dangling-whitespace -range $(PR_BASE_SHA)..$(or $(PR_HEAD_SHA),HEAD)
-else
-	$(GOBIN)/git-validation -q -run DCO,short-subject,dangling-whitespace
-endif
+	$(GOBIN)/git-validation -v -run DCO,short-subject,dangling-whitespace -range HEAD^..HEAD
 endif
