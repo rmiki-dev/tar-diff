@@ -2,6 +2,9 @@
 
 export GOPROXY=https://proxy.golang.org
 
+#Disables VCS stamp to stop query of git metadata causing test failture 
+export GOFLAGS=-buildvcs=false
+
 GOBIN ?= $(shell echo $$HOME)/go/bin
 
 BUILDFLAGS :=
