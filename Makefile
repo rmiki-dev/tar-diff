@@ -1,4 +1,8 @@
-.PHONY: all build clean fmt install lint test tools unit-test integration-test validate .install.golangci-lint
+PROJECT := tar-diff
+VERSION := $(shell grep -oP 'VERSION\s*=\s*"\K[^"]+' pkg/common/version.go)
+PROJ_TARBALL := $(PROJECT)_$(VERSION).tar.gz
+
+.PHONY: all build clean fmt install lint test tools dist unit-test integration-test validate .install.golangci-lint
 
 export GOPROXY=https://proxy.golang.org
 
@@ -24,6 +28,9 @@ export PATH := $(PATH):${GOBIN}
 
 all: tools tar-diff tar-patch test validate
 
+$(PROJ_TARBALL):
+	git archive --prefix=tar-diff_$(VERSION)/ --format=tar.gz HEAD > $(PROJ_TARBALL) 
+
 build:
 	go build $(GOFLAGS) ./...
 
@@ -47,6 +54,7 @@ tools: .install.golangci-lint
 
 clean:
 	rm -f tar-diff tar-patch
+	rm -rf $(PROJECT)_$(VERSION) $(PROJ_TARBALL)
 
 integration-test: tar-diff tar-patch
 	tests/test.sh
@@ -65,3 +73,7 @@ validate: lint
 
 lint:
 	GOFLAGS=$(GOFLAGS) $(GOBIN)/golangci-lint run
+
+dist: $(PROJ_TARBALL)
+	@echo "Created $(PROJ_TARBALL)"
+
