@@ -3,13 +3,18 @@
 export GOPROXY=https://proxy.golang.org
 
 
-GOBIN ?= $(shell echo $$HOME)/go/bin
+GOBIN := $(shell go env GOBIN)
+ifeq ($(GOBIN),)
+GOPATH := $(shell go env GOPATH)
+GOBIN := $(GOPATH)/bin
+endif
 
-export GOFLAGS := -buildvcs=false
+GOFLAGS:=
+ifeq ($(GOFLAGS),)
+GOFLAGS := -buildvcs=false
+endif
 
-BUILDFLAGS :=
-
-PACKAGES := $(shell go list $(BUILDFLAGS) ./...)
+PACKAGES := $(shell go list $(GOFLAGS) ./...)
 SOURCE_DIRS = $(shell echo $(PACKAGES) | awk 'BEGIN{FS="/"; RS=" "}{print $$4}' | uniq)
 
 PREFIX ?= ${DESTDIR}/usr
@@ -20,13 +25,13 @@ export PATH := $(PATH):${GOBIN}
 all: tools tar-diff tar-patch test validate
 
 build:
-	go build $(BUILDFLAGS) ./...
+	go build $(GOFLAGS) ./...
 
 tar-diff:
-	go build $(BUILDFLAGS) ./cmd/tar-diff
+	go build $(GOFLAGS) ./cmd/tar-diff
 
 tar-patch:
-	go build $(BUILDFLAGS) ./cmd/tar-patch
+	go build $(GOFLAGS) ./cmd/tar-patch
 
 install: tar-diff tar-patch
 	install -d -m 755 ${INSTALLDIR}
@@ -47,7 +52,7 @@ integration-test: tar-diff tar-patch
 	tests/test.sh
 
 unit-test:
-	go test $(BUILDFLAGS) -cover ./...
+	go test $(GOFLAGS) -cover ./...
 
 test: unit-test integration-test
 
@@ -55,9 +60,8 @@ fmt:
 	@gofmt -l -s -w $(SOURCE_DIRS)
 
 validate: lint
-	@go vet ./...
+	@go vet $(GOFLAGS) ./...
 	@test -z "$$(gofmt -s -l . | tee /dev/stderr)"
 
 lint:
-	$(GOBIN)/golangci-lint run
-
+	GOFLAGS=$(GOFLAGS) $(GOBIN)/golangci-lint run
