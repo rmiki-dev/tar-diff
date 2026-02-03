@@ -1,4 +1,15 @@
-.PHONY: all build clean fmt install lint test tools unit-test integration-test validate .install.golangci-lint
+PROJECT := tar-diff
+VERSION := 2.0
+PROJDIR := $(PROJECT).$(VERSION)
+TARBALL := $(PROJECT).$(VERSION).tgz
+
+DIST_FILES := cmd pkg tests .github \
+	go.mod go.sum Makefile .gitignore \
+	README.md LICENSE CODE-OF-CONDUCT.md file-format.md SECURITY.md
+
+
+
+.PHONY: all build clean fmt install lint test tools dist unit-test integration-test validate .install.golangci-lint
 
 export GOPROXY=https://proxy.golang.org
 
@@ -47,6 +58,7 @@ tools: .install.golangci-lint
 
 clean:
 	rm -f tar-diff tar-patch
+	rm -rf $(PROJDIR) $(TARBALL)
 
 integration-test: tar-diff tar-patch
 	tests/test.sh
@@ -65,3 +77,10 @@ validate: lint
 
 lint:
 	GOFLAGS=$(GOFLAGS) $(GOBIN)/golangci-lint run
+
+dist:
+	mkdir -p $(PROJDIR)
+	cp -r $(DIST_FILES) $(PROJDIR)/
+	tar -czvf $(TARBALL) $(PROJDIR)
+	rm -rf $(PROJDIR)
+
