@@ -17,8 +17,8 @@ endif
 PACKAGES := $(shell go list $(GOFLAGS) ./...)
 SOURCE_DIRS = $(shell echo $(PACKAGES) | awk 'BEGIN{FS="/"; RS=" "}{print $$4}' | uniq)
 
-PREFIX ?= ${DESTDIR}/usr
-INSTALLDIR=${PREFIX}/bin
+PREFIX ?= /usr
+INSTALLDIR=${DESTDIR}${PREFIX}/bin
 
 export PATH := $(PATH):${GOBIN}
 
