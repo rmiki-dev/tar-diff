@@ -8,6 +8,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"io"
+	"log"
 
 	"github.com/containers/image/v5/pkg/compression"
 )
@@ -192,13 +193,21 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 	if err != nil {
 		return err
 	}
-	defer tarFile.Close()
+	defer func() {
+		if err := tarFile.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	deltaWriter, err := newDeltaWriter(deltaFile, options.compressionLevel)
 	if err != nil {
 		return err
 	}
-	defer deltaWriter.Close()
+	defer func() {
+		if err := deltaWriter.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	stealingTarFile := newStealerReader(tarFile, deltaWriter)
 	tarReader := tar.NewReader(stealingTarFile)
@@ -299,7 +308,12 @@ func Diff(oldTarFile io.ReadSeeker, newTarFile io.ReadSeeker, diffFile io.Writer
 	if err != nil {
 		return nil
 	}
-	defer analysis.Close()
+
+	defer func() {
+		if err := analysis.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	// Actually create the delta
 	if err := generateDelta(newTarFile, diffFile, analysis, options); err != nil {

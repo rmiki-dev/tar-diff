@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"io"
+	"log"
 	"os"
 	"path"
 	"strings"
@@ -23,7 +24,8 @@ type tarFileInfo struct {
 }
 
 type tarInfo struct {
-	files []tarFileInfo // no size=0 files
+	files     []tarFileInfo // no size=0 files
+	hardlinks []hardlinkInfo
 }
 
 type targetInfo struct {
@@ -45,9 +47,15 @@ type deltaAnalysis struct {
 	targetInfoByIndex map[int]*targetInfo
 }
 
-func (a *deltaAnalysis) Close() {
-	a.sourceData.Close()
-	os.Remove(a.sourceData.Name())
+func (a *deltaAnalysis) Close() error {
+	err := a.sourceData.Close()
+	if removeErr := os.Remove(a.sourceData.Name()); removeErr != nil {
+		log.Printf("failed to remove: %v", removeErr)
+		if err == nil {
+			err = removeErr
+		}
+	}
+	return err
 }
 
 func isSparseFile(hdr *tar.Header) bool {
@@ -110,7 +118,11 @@ func analyzeTar(tarMaybeCompressed io.Reader) (*tarInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer tarFile.Close()
+	defer func() {
+		if err := tarFile.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	files := make([]tarFileInfo, 0)
 	infoByPath := make(map[string]int) // map from path to index in 'files'
@@ -206,7 +218,11 @@ func extractDeltaData(tarMaybeCompressed io.Reader, sourceByIndex map[int]*sourc
 	if err != nil {
 		return err
 	}
-	defer tarFile.Close()
+	defer func() {
+		if err := tarFile.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	rdr := tar.NewReader(tarFile)
 	for index := 0; true; index++ {
