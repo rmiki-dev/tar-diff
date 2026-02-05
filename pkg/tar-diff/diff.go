@@ -1,13 +1,10 @@
 package tar_diff
 
-// TODO
-// * Handle same file multiple times in tarfile
-// * Handle hardlinks
-
 import (
 	"archive/tar"
 	"bytes"
 	"io"
+	"log"
 
 	"github.com/containers/image/v5/pkg/compression"
 )
@@ -192,13 +189,21 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 	if err != nil {
 		return err
 	}
-	defer tarFile.Close()
+	defer func() {
+		if err := tarFile.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	deltaWriter, err := newDeltaWriter(deltaFile, options.compressionLevel)
 	if err != nil {
 		return err
 	}
-	defer deltaWriter.Close()
+	defer func() {
+		if err := deltaWriter.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	stealingTarFile := newStealerReader(tarFile, deltaWriter)
 	tarReader := tar.NewReader(stealingTarFile)
@@ -224,6 +229,11 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 		}
 
 		info := g.analysis.targetInfoByIndex[index]
+		if info != nil && info.hardlink != nil {
+			// Handle hardlink - header was already copied by stealerReader
+			// Hardlinks have no content, so we're done
+			continue
+		}
 		if info != nil && info.source != nil {
 			if err := g.generateForFile(info); err != nil {
 				return err
@@ -297,9 +307,14 @@ func Diff(oldTarFile io.ReadSeeker, newTarFile io.ReadSeeker, diffFile io.Writer
 	// Compare new and old for delta information
 	analysis, err := analyzeForDelta(oldInfo, newInfo, oldTarFile)
 	if err != nil {
-		return nil
+		return err
 	}
-	defer analysis.Close()
+
+	defer func() {
+		if err := analysis.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	// Actually create the delta
 	if err := generateDelta(newTarFile, diffFile, analysis, options); err != nil {

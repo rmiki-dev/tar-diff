@@ -3,10 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/containers/tar-diff/pkg/common"
-	"github.com/containers/tar-diff/pkg/tar-diff"
+	"log"
 	"os"
 	"path"
+
+	"github.com/containers/tar-diff/pkg/common"
+	tar_diff "github.com/containers/tar-diff/pkg/tar-diff"
 )
 
 var version = flag.Bool("version", false, "Show version")
@@ -16,8 +18,8 @@ var maxBsdiffSize = flag.Int("max-bsdiff-size", 192, "Max file size in megabytes
 func main() {
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPION] old.tar.gz new.tar.gz result.tardiff\n", path.Base(os.Args[0]))
-		fmt.Fprintf(flag.CommandLine.Output(), "Options:\n")
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTION] old.tar.gz new.tar.gz result.tardiff\n", path.Base(os.Args[0]))
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Options:\n")
 		flag.PrintDefaults()
 	}
 
@@ -39,22 +41,28 @@ func main() {
 
 	oldFile, err := os.Open(oldFilename)
 	if err != nil {
-		fmt.Fprintf(flag.CommandLine.Output(), "Unable to open %s: %s\n", oldFilename, err)
-		os.Exit(1)
+		log.Fatalf("Error: %s", err)
 	}
-	defer oldFile.Close()
+
+	defer func() {
+		if err := oldFile.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing %s: %s\n", oldFilename, err)
+		}
+	}()
 
 	newFile, err := os.Open(newFilename)
 	if err != nil {
-		fmt.Fprintf(flag.CommandLine.Output(), "Unable to open %s: %s\n", newFilename, err)
-		os.Exit(1)
+		log.Fatalf("Error: %s", err)
 	}
-	defer newFile.Close()
+	defer func() {
+		if err := newFile.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing %s: %s\n", newFilename, err)
+		}
+	}()
 
 	deltaFile, err := os.Create(deltaFilename)
 	if err != nil {
-		fmt.Fprintf(flag.CommandLine.Output(), "Unable to create %s: %s\n", deltaFilename, err)
-		os.Exit(1)
+		log.Fatalf("Error: %s", err)
 	}
 
 	options := tar_diff.NewOptions()
@@ -63,13 +71,12 @@ func main() {
 
 	err = tar_diff.Diff(oldFile, newFile, deltaFile, options)
 	if err != nil {
-		fmt.Fprintf(flag.CommandLine.Output(), "Error generating delta: %s\n", err)
-		os.Exit(1)
+		log.Fatalf("Error: %s", err)
 	}
 
 	err = deltaFile.Close()
 	if err != nil {
-		fmt.Fprintf(flag.CommandLine.Output(), "Error generating delta: %s\n", err)
+		log.Fatalf("Error: %s", err)
 	}
 
 }

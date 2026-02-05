@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"io"
+	"log"
 	"os"
 	"path"
 	"strings"
@@ -22,12 +23,21 @@ type tarFileInfo struct {
 	overwritten bool
 }
 
+type hardlinkInfo struct {
+	index    int
+	path     string
+	linkname string
+	header   *tar.Header
+}
+
 type tarInfo struct {
-	files []tarFileInfo // no size=0 files
+	files     []tarFileInfo // no size=0 files
+	hardlinks []hardlinkInfo
 }
 
 type targetInfo struct {
 	file           *tarFileInfo
+	hardlink       *hardlinkInfo
 	source         *sourceInfo
 	rollsumMatches *rollsumMatches
 }
@@ -45,9 +55,15 @@ type deltaAnalysis struct {
 	targetInfoByIndex map[int]*targetInfo
 }
 
-func (a *deltaAnalysis) Close() {
-	a.sourceData.Close()
-	os.Remove(a.sourceData.Name())
+func (a *deltaAnalysis) Close() error {
+	err := a.sourceData.Close()
+	if removeErr := os.Remove(a.sourceData.Name()); removeErr != nil {
+		log.Printf("failed to remove: %v", removeErr)
+		if err == nil {
+			err = removeErr
+		}
+	}
+	return err
 }
 
 func isSparseFile(hdr *tar.Header) bool {
@@ -110,9 +126,14 @@ func analyzeTar(tarMaybeCompressed io.Reader) (*tarInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer tarFile.Close()
+	defer func() {
+		if err := tarFile.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	files := make([]tarFileInfo, 0)
+	hardlinks := make([]hardlinkInfo, 0)
 	infoByPath := make(map[string]int) // map from path to index in 'files'
 
 	rdr := tar.NewReader(tarFile)
@@ -128,6 +149,23 @@ func analyzeTar(tarMaybeCompressed io.Reader) (*tarInfo, error) {
 		}
 		// Normalize name, for safety
 		pathname := cleanPath(hdr.Name)
+
+		// Handle hardlinks
+		if hdr.Typeflag == tar.TypeLink {
+			linkname := cleanPath(hdr.Linkname)
+			if linkname != "" {
+				// Store a copy of the header for later use
+				hdrCopy := *hdr
+				hardlinks = append(hardlinks, hardlinkInfo{
+					index:    index,
+					path:     pathname,
+					linkname: linkname,
+					header:   &hdrCopy,
+				})
+			}
+			// Skip the content (hardlinks have no content)
+			continue
+		}
 
 		// If a file is in the archive several times, mark it as overwritten so its not used for delta source
 		if oldIndex, ok := infoByPath[pathname]; ok {
@@ -157,7 +195,7 @@ func analyzeTar(tarMaybeCompressed io.Reader) (*tarInfo, error) {
 		files = append(files, fileInfo)
 	}
 
-	info := tarInfo{files: files}
+	info := tarInfo{files: files, hardlinks: hardlinks}
 	return &info, nil
 }
 
@@ -206,7 +244,11 @@ func extractDeltaData(tarMaybeCompressed io.Reader, sourceByIndex map[int]*sourc
 	if err != nil {
 		return err
 	}
-	defer tarFile.Close()
+	defer func() {
+		if err := tarFile.Close(); err != nil {
+			log.Printf("close tar file: %v", err)
+		}
+	}()
 
 	rdr := tar.NewReader(tarFile)
 	for index := 0; true; index++ {
@@ -255,7 +297,7 @@ func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnaly
 		}
 	}
 
-	targetInfos := make([]targetInfo, 0, len(new.files))
+	targetInfos := make([]targetInfo, 0, len(new.files)+len(new.hardlinks))
 
 	for i := range new.files {
 		file := &new.files[i]
@@ -317,10 +359,17 @@ func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnaly
 		targetInfos = append(targetInfos, info)
 	}
 
-	targetInfoByIndex := make(map[int]*targetInfo)
+	targetInfoByIndex := make(map[int]*targetInfo, len(new.files)+len(new.hardlinks))
 	for i := range targetInfos {
 		t := &targetInfos[i]
 		targetInfoByIndex[t.file.index] = t
+	}
+	// Add hardlinks to targetInfoByIndex
+	for i := range new.hardlinks {
+		hl := &new.hardlinks[i]
+		info := targetInfo{hardlink: hl}
+		targetInfos = append(targetInfos, info)
+		targetInfoByIndex[hl.index] = &targetInfos[len(targetInfos)-1]
 	}
 
 	tmpfile, err := os.CreateTemp("/var/tmp", "tar-diff-")
@@ -330,6 +379,7 @@ func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnaly
 
 	err = extractDeltaData(oldFile, sourceByIndex, tmpfile)
 	if err != nil {
+		_ = os.Remove(tmpfile.Name())
 		return nil, err
 	}
 

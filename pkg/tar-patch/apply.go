@@ -5,11 +5,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/containers/tar-diff/pkg/common"
-	"github.com/klauspost/compress/zstd"
 	"io"
 	"os"
 	"path"
+
+	"github.com/containers/tar-diff/pkg/common"
+	"github.com/klauspost/compress/zstd"
 )
 
 type DataSource interface {
@@ -55,7 +56,7 @@ func (f *FilesystemDataSource) Close() error {
 
 func (f *FilesystemDataSource) Read(data []byte) (n int, err error) {
 	if f.currentFile == nil {
-		return 0, fmt.Errorf("No current file set")
+		return 0, fmt.Errorf("no current file set")
 	}
 	return f.currentFile.Read(data)
 }
@@ -78,7 +79,7 @@ func (f *FilesystemDataSource) SetCurrentFile(file string) error {
 
 func (f *FilesystemDataSource) Seek(offset int64, whence int) (int64, error) {
 	if f.currentFile == nil {
-		return 0, fmt.Errorf("No current file set")
+		return 0, fmt.Errorf("no current file set")
 	}
 	return f.currentFile.Seek(offset, whence)
 }
@@ -90,7 +91,7 @@ func Apply(delta io.Reader, dataSource DataSource, dst io.Writer) error {
 		return err
 	}
 	if !bytes.Equal(buf, common.DeltaHeader[:]) {
-		return fmt.Errorf("Invalid delta format")
+		return fmt.Errorf("invalid delta format")
 	}
 
 	decoder, err := zstd.NewReader(delta)
@@ -130,7 +131,7 @@ func Apply(delta io.Reader, dataSource DataSource, dst io.Writer) error {
 			name := string(nameBytes)
 			cleanName := cleanPath(name)
 			if len(cleanName) == 0 {
-				return fmt.Errorf("Invalid source name '%v' in tar-diff", name)
+				return fmt.Errorf("invalid source name '%v' in tar-diff", name)
 			}
 			err := dataSource.SetCurrentFile(cleanName)
 			if err != nil {
@@ -162,12 +163,12 @@ func Apply(delta io.Reader, dataSource DataSource, dst io.Writer) error {
 			}
 
 		case common.DeltaOpSeek:
-			_, err = dataSource.Seek(int64(size), 0)
+			_, err = dataSource.Seek(int64(size), io.SeekStart)
 			if err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("Unexpected delta op %d", op)
+			return fmt.Errorf("unexpected delta op %d", op)
 		}
 	}
 

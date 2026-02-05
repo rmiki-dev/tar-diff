@@ -42,6 +42,7 @@ modify_orig () {
 
     echo bar >> data/dir1/bar.txt
     mv data/dir1/bar.txt data/dir1/bar.TXT # Rename we should pick up
+    ln data/dir1/foo.txt data/dir1/hardlink2 
 
     popd &> /dev/null
 }
