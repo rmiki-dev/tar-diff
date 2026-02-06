@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"strings"
@@ -324,7 +323,7 @@ func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnaly
 		targetInfoByIndex[t.file.index] = t
 	}
 
-	tmpfile, err := ioutil.TempFile("/var/tmp", "tar-diff-")
+	tmpfile, err := os.CreateTemp("/var/tmp", "tar-diff-")
 	if err != nil {
 		return nil, err
 	}
