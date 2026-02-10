@@ -3,18 +3,25 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/containers/tar-diff/pkg/common"
-	"github.com/containers/tar-diff/pkg/tar-patch"
 	"os"
 	"path"
+
+	"github.com/containers/tar-diff/pkg/common"
+	tar_patch "github.com/containers/tar-diff/pkg/tar-patch"
 )
 
 var version = flag.Bool("version", false, "Show version")
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPION] file.tardiff /path/to/content destination.tar\n", path.Base(os.Args[0]))
-		fmt.Fprintf(flag.CommandLine.Output(), "Options:\n")
+		_, err := fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTION] file.tardiff /path/to/content destination.tar\n", path.Base(os.Args[0]))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Usage: %s [OPTION] file.tardiff /path/to/content destination.tar\n", path.Base(os.Args[0]))
+		}
+		_, err = fmt.Fprintf(flag.CommandLine.Output(), "Options:\n")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Options:\n")
+		}
 		flag.PrintDefaults()
 	}
 
@@ -35,14 +42,23 @@ func main() {
 	patchedFilename := flag.Arg(2)
 
 	dataSource := tar_patch.NewFilesystemDataSource(extractedDir)
-	defer dataSource.Close()
+	defer func() {
+		if err := dataSource.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing %s: %s\n", extractedDir, err)
+		}
+	}()
 
 	deltaFile, err := os.Open(deltaFilename)
 	if err != nil {
-		fmt.Fprintf(flag.CommandLine.Output(), "Unable to open %s: %s\n", deltaFilename, err)
+		// Discard Fprintf return to satisfy linter errcheck (handle Fprintf return).
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Unable to open %s: %s\n", deltaFilename, err)
 		os.Exit(1)
 	}
-	defer deltaFile.Close()
+	defer func() {
+		if err := deltaFile.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing %s: %s\n", deltaFilename, err)
+		}
+	}()
 
 	var patchedFile *os.File
 
@@ -52,15 +68,19 @@ func main() {
 		var err error
 		patchedFile, err = os.Create(patchedFilename)
 		if err != nil {
-			fmt.Fprintf(flag.CommandLine.Output(), "Unable to create %s: %s\n", patchedFilename, err)
+			_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Unable to create %s: %s\n", patchedFilename, err)
 			os.Exit(1)
 		}
-		defer patchedFile.Close()
+		defer func() {
+			if err := patchedFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing %s: %s\n", patchedFilename, err)
+			}
+		}()
 	}
 
 	err = tar_patch.Apply(deltaFile, dataSource, patchedFile)
 	if err != nil {
-		fmt.Fprintf(flag.CommandLine.Output(), "Error applying diff: %s\n", err)
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Error applying diff: %s\n", err)
 		os.Exit(1)
 	}
 }

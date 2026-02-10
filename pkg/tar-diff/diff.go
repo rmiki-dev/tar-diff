@@ -1,9 +1,5 @@
 package tar_diff
 
-// TODO
-// * Handle same file multiple times in tarfile
-// * Handle hardlinks
-
 import (
 	"archive/tar"
 	"bytes"
@@ -222,7 +218,7 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 
 	for index := 0; true; index++ {
 		g.setSkip(false)
-		_, err := g.tarReader.Next()
+		hdr, err := g.tarReader.Next()
 		if err != nil {
 			if err == io.EOF {
 				// Expected error
@@ -233,9 +229,22 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 		}
 
 		info := g.analysis.targetInfoByIndex[index]
+		if info != nil && info.hardlink != nil {
+			// Handle hardlink - header was already copied by stealerReader
+			// Hardlinks have no content, so we're done
+			continue
+		}
 		if info != nil && info.source != nil {
 			if err := g.generateForFile(info); err != nil {
 				return err
+			}
+		} else if info == nil && hdr.Typeflag == tar.TypeLink {
+			// Hardlink not tracked in analysis, but we still need to handle it
+			// Header was already copied by stealerReader, skip any content
+			if hdr.Size > 0 {
+				if err := g.skipRest(); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -306,7 +315,7 @@ func Diff(oldTarFile io.ReadSeeker, newTarFile io.ReadSeeker, diffFile io.Writer
 	// Compare new and old for delta information
 	analysis, err := analyzeForDelta(oldInfo, newInfo, oldTarFile)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	defer func() {
