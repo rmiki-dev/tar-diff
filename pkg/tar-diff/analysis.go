@@ -299,7 +299,7 @@ func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnaly
 		}
 	}
 
-	targetInfos := make([]targetInfo, 0, len(new.files))
+	targetInfos := make([]targetInfo, 0, len(new.files)+len(new.hardlinks))
 
 	for i := range new.files {
 		file := &new.files[i]
@@ -361,7 +361,7 @@ func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnaly
 		targetInfos = append(targetInfos, info)
 	}
 
-	targetInfoByIndex := make(map[int]*targetInfo)
+	targetInfoByIndex := make(map[int]*targetInfo, len(new.files)+len(new.hardlinks))
 	for i := range targetInfos {
 		t := &targetInfos[i]
 		targetInfoByIndex[t.file.index] = t

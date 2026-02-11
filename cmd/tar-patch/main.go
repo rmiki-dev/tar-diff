@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"path"
 
@@ -50,8 +51,7 @@ func main() {
 
 	deltaFile, err := os.Open(deltaFilename)
 	if err != nil {
-		// Discard Fprintf return to satisfy linter errcheck (handle Fprintf return).
-		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Unable to open %s: %s\n", deltaFilename, err)
+		log.Fatalf("Unable to open %s: %s", deltaFilename, err)
 		os.Exit(1)
 	}
 	defer func() {
@@ -68,7 +68,7 @@ func main() {
 		var err error
 		patchedFile, err = os.Create(patchedFilename)
 		if err != nil {
-			_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Unable to create %s: %s\n", patchedFilename, err)
+			log.Fatalf("Unable to create %s: %s", patchedFilename, err)
 			os.Exit(1)
 		}
 		defer func() {
@@ -80,7 +80,7 @@ func main() {
 
 	err = tar_patch.Apply(deltaFile, dataSource, patchedFile)
 	if err != nil {
-		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Error applying diff: %s\n", err)
+		log.Fatalf("Error applying diff: %s", err)
 		os.Exit(1)
 	}
 }
