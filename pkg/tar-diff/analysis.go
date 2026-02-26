@@ -372,7 +372,7 @@ func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnaly
 		targetInfoByIndex[hl.index] = &targetInfos[len(targetInfos)-1]
 	}
 
-	tmpfile, err := os.CreateTemp("/var/tmp", "tar-diff-")
+	tmpfile, err := os.CreateTemp(os.TempDir(), "tar-diff-")
 	if err != nil {
 		return nil, err
 	}

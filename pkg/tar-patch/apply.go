@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 
 	"github.com/containers/tar-diff/pkg/common"
 	"github.com/klauspost/compress/zstd"
@@ -29,7 +30,7 @@ type FilesystemDataSource struct {
 func cleanPath(pathName string) string {
 	// We make the path always absolute, that way path.Clean() ensure it never goes outside the top ("root") dir
 	// even if its a relative path
-	clean := path.Clean("/" + pathName)
+	clean := path.Clean(path.Join("/", pathName))
 
 	// We clean the initial slash, making all result relative (or "" which is error)
 	return clean[1:]
@@ -69,7 +70,7 @@ func (f *FilesystemDataSource) SetCurrentFile(file string) error {
 			return nil
 		}
 	}
-	currentFile, err := os.Open(f.basePath + "/" + file)
+	currentFile, err := os.Open(filepath.Join(f.basePath, file))
 	if err != nil {
 		return err
 	}
