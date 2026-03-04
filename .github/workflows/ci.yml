@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - main
+      - multi-platform
   pull_request:
 
 jobs:
@@ -39,6 +40,7 @@ jobs:
         uses: actions/checkout@v6
       - name: Build and test
         run: make
+ 
   version-release:
     runs-on: ubuntu-latest
     needs: [test-makefile, test-fedora]
@@ -59,3 +61,30 @@ jobs:
         uses: cycjimmy/semantic-release-action@v6
         env:
           GITHUB_TOKEN: ${{ steps.create_token.outputs.token }}
+
+  test-macOS:
+     name: Build and test on macOS
+     runs-on: macos-latest
+     steps:
+       - name: check out repository
+         uses: actions/checkout@v6
+       - name: Install dependencies
+         run: |
+           brew update
+           brew install golang make diffutils git grep gnu-tar
+       - name: Build and test
+         run: make
+
+
+  test-windows:
+    name: Build and test on Windows
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Install dependencies
+        run: |
+          choco install -y golang make diffutils gzip bzip2 git 
+      - name: Build and test
+        run: bash -c "make"
+

@@ -49,8 +49,8 @@ modify_orig () {
 
 compress_tar () {
     FILE=$1
-    gzip --keep $FILE
-    bzip2 --keep $FILE
+    gzip -k $FILE
+    bzip2 -k $FILE
 }
 
 create_tar () {
