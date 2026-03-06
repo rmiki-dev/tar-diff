@@ -1,5 +1,5 @@
 PROJECT := tar-diff
-VERSION := $(shell grep -oP 'VERSION\s*=\s*"\K[^"]+' pkg/common/version.go)
+VERSION := $(shell grep -oP 'VERSION\s*=\s*"\K[^"]+' pkg/protocol/version.go)
 PROJ_TARBALL := $(PROJECT)_$(VERSION).tar.gz
 
 .PHONY: all build clean fmt install lint test tools dist unit-test integration-test validate .install.golangci-lint
@@ -69,7 +69,8 @@ fmt:
 
 validate: lint
 	@go vet $(GOFLAGS) ./...
-	@test -z "$$(gofmt -s -l . | tee /dev/stderr)"
+	@output=$$(gofmt -s -l .) ; \
+	[ -z "$${output}" ] || { echo -e "Files need formatting:\n $${output}" ; exit 1 ;}
 
 lint:
 	GOFLAGS=$(GOFLAGS) $(GOBIN)/golangci-lint run

@@ -1,4 +1,4 @@
-package tar_diff
+package tardiff
 
 import (
 	"io"
@@ -20,7 +20,7 @@ func newStealerReader(source io.Reader, stealer io.Writer) *stealerReader {
 
 func (s *stealerReader) Read(p []byte) (int, error) {
 	n, err := s.source.Read(p)
-	var writeErr error = nil
+	var writeErr error
 	if !s.ignore && n > 0 {
 		_, writeErr = s.stealer.Write(p[0:n])
 	}

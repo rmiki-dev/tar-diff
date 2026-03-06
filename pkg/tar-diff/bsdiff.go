@@ -1,4 +1,4 @@
-package tar_diff
+package tardiff
 
 // This was originally taken from the bsdiff 4 code:
 
@@ -36,11 +36,12 @@ import (
 	"bytes"
 )
 
+//nolint:gocyclo // bsdiff algorithm is inherently complex, refactoring would risk breaking the proven algorithm
 func bsdiff(oldbin, newbin []byte, deltaWriter *deltaWriter) error {
 	iii := make([]int, len(oldbin)+1)
 	qsufsort(iii, oldbin)
 
-	//var db
+	// var db
 	var dblen, eblen, ebpos, slen int
 
 	newsize := len(newbin)
@@ -170,7 +171,7 @@ func bsdiff(oldbin, newbin []byte, deltaWriter *deltaWriter) error {
 	return nil
 }
 
-func min(a, b int) int {
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}
@@ -194,7 +195,7 @@ func search(iii []int, oldbin []byte, newbin []byte, st, en int, pos *int) int {
 	}
 
 	x = st + (en-st)/2
-	cmpln := min(oldsize-iii[x], newsize)
+	cmpln := minInt(oldsize-iii[x], newsize)
 	if bytes.Compare(oldbin[iii[x]:iii[x]+cmpln], newbin[:cmpln]) < 0 {
 		return search(iii, oldbin, newbin, x, en, pos)
 	}
@@ -322,12 +323,14 @@ func split(iii, vvv []int, start, ln, h int) {
 	j = 0
 	k = 0
 	for i < jj {
-		if vvv[iii[i]+h] < x {
+		val := vvv[iii[i]+h]
+		switch {
+		case val < x:
 			i++
-		} else if vvv[iii[i]+h] == x {
+		case val == x:
 			iii[i], iii[jj+j] = iii[jj+j], iii[i]
 			j++
-		} else {
+		default:
 			iii[i], iii[kk+k] = iii[kk+k], iii[i]
 			k++
 		}

@@ -1,4 +1,4 @@
-package tar_diff
+package tardiff
 
 import (
 	"hash"
@@ -51,7 +51,7 @@ func (r *rollsum) add(drop byte, add byte) {
 }
 
 func (r *rollsum) roll(ch byte) {
-	r.blobSize += 1
+	r.blobSize++
 	r.add(r.window[r.wofs], ch)
 	r.window[r.wofs] = ch
 	r.wofs = (r.wofs + 1) % bupWindowSize
@@ -63,7 +63,7 @@ func (r *rollsum) shouldSplit() bool {
 }
 
 func (r *rollsum) init() {
-	r.blobStart = r.blobStart + r.blobSize
+	r.blobStart += r.blobSize
 	r.blobSize = 0
 	r.blobCrc = crc32.NewIEEE()
 	r.s1 = bupWindowSize * bupCharOffset

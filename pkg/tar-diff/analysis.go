@@ -1,4 +1,5 @@
-package tar_diff
+// Package tardiff provides functionality for analyzing and creating binary differences between tar archives.
+package tardiff
 
 import (
 	"archive/tar"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/containers/image/v5/pkg/compression"
+	"github.com/containers/tar-diff/pkg/protocol"
 )
 
 type tarFileInfo struct {
@@ -80,14 +82,6 @@ func isSparseFile(hdr *tar.Header) bool {
 
 // Cleans up the path lexically
 // Any ".." that extends outside the first elements (or the root itself) is invalid and returns ""
-func cleanPath(pathName string) string {
-	// We make the path always absolute, that way path.Clean() ensure it never goes outside the top ("root") dir
-	// even if its a relative path
-	clean := path.Clean("/" + pathName)
-
-	// We clean the initial slash, making all result relative (or "" which is error)
-	return clean[1:]
-}
 
 // Ignore all the files that make no sense to either delta or re-use as is
 func useTarFile(hdr *tar.Header, cleanPath string) bool {
@@ -143,16 +137,15 @@ func analyzeTar(tarMaybeCompressed io.Reader) (*tarInfo, error) {
 		if err != nil {
 			if err == io.EOF {
 				break // Expected error
-			} else {
-				return nil, err
 			}
+			return nil, err
 		}
 		// Normalize name, for safety
-		pathname := cleanPath(hdr.Name)
+		pathname := protocol.CleanPath(hdr.Name)
 
 		// Handle hardlinks
 		if hdr.Typeflag == tar.TypeLink {
-			linkname := cleanPath(hdr.Linkname)
+			linkname := protocol.CleanPath(hdr.Linkname)
 			if linkname != "" {
 				// Store a copy of the header for later use
 				hdrCopy := *hdr
@@ -216,11 +209,10 @@ func isDeltaCandidate(file *tarFileInfo) bool {
 func nameIsSimilar(a *tarFileInfo, b *tarFileInfo, fuzzy int) bool {
 	if fuzzy == 0 {
 		return a.basename == b.basename
-	} else {
-		aa := strings.SplitAfterN(a.basename, ".", 2)[0]
-		bb := strings.SplitAfterN(b.basename, ".", 2)[0]
-		return aa == bb
 	}
+	aa := strings.SplitAfterN(a.basename, ".", 2)[0]
+	bb := strings.SplitAfterN(b.basename, ".", 2)[0]
+	return aa == bb
 }
 
 // Check that two files are not wildly dissimilar in size.
@@ -257,9 +249,8 @@ func extractDeltaData(tarMaybeCompressed io.Reader, sourceByIndex map[int]*sourc
 		if err != nil {
 			if err == io.EOF {
 				break // Expected error
-			} else {
-				return err
 			}
+			return err
 		}
 		info := sourceByIndex[index]
 		if info != nil && info.usedForDelta {
@@ -279,7 +270,7 @@ func abs(n int64) int64 {
 	}
 	return n
 }
-func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnalysis, error) {
+func analyzeForDelta(old *tarInfo, newTar *tarInfo, oldFile io.Reader) (*deltaAnalysis, error) {
 	sourceInfos := make([]sourceInfo, 0, len(old.files))
 	for i := range old.files {
 		sourceInfos = append(sourceInfos, sourceInfo{file: &old.files[i]})
@@ -297,10 +288,10 @@ func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnaly
 		}
 	}
 
-	targetInfos := make([]targetInfo, 0, len(new.files)+len(new.hardlinks))
+	targetInfos := make([]targetInfo, 0, len(newTar.files)+len(newTar.hardlinks))
 
-	for i := range new.files {
-		file := &new.files[i]
+	for i := range newTar.files {
+		file := &newTar.files[i]
 		// First look for exact content match
 		usedForDelta := false
 		var source *sourceInfo
@@ -359,14 +350,14 @@ func analyzeForDelta(old *tarInfo, new *tarInfo, oldFile io.Reader) (*deltaAnaly
 		targetInfos = append(targetInfos, info)
 	}
 
-	targetInfoByIndex := make(map[int]*targetInfo, len(new.files)+len(new.hardlinks))
+	targetInfoByIndex := make(map[int]*targetInfo, len(newTar.files)+len(newTar.hardlinks))
 	for i := range targetInfos {
 		t := &targetInfos[i]
 		targetInfoByIndex[t.file.index] = t
 	}
 	// Add hardlinks to targetInfoByIndex
-	for i := range new.hardlinks {
-		hl := &new.hardlinks[i]
+	for i := range newTar.hardlinks {
+		hl := &newTar.hardlinks[i]
 		info := targetInfo{hardlink: hl}
 		targetInfos = append(targetInfos, info)
 		targetInfoByIndex[hl.index] = &targetInfos[len(targetInfos)-1]

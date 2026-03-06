@@ -1,4 +1,4 @@
-package tar_diff
+package tardiff
 
 import (
 	"archive/tar"

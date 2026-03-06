@@ -1,4 +1,4 @@
-package tar_diff
+package tardiff
 
 import (
 	"archive/tar"
@@ -157,7 +157,8 @@ func (g *deltaGenerator) generateForFile(info *targetInfo) error {
 
 	maxBsdiffSize := g.options.maxBsdiffSize
 
-	if sourceFile.sha1 == file.sha1 && sourceFile.size == file.size {
+	switch {
+	case sourceFile.sha1 == file.sha1 && sourceFile.size == file.size:
 		// Reuse exact file from old tar
 		if err := g.deltaWriter.WriteOldFile(sourceFile.path, uint64(sourceFile.size)); err != nil {
 			return err
@@ -166,17 +167,17 @@ func (g *deltaGenerator) generateForFile(info *targetInfo) error {
 		if err := g.skipRest(); err != nil {
 			return err
 		}
-	} else if maxBsdiffSize == 0 || (file.size < maxBsdiffSize && sourceFile.size < maxBsdiffSize) {
+	case maxBsdiffSize == 0 || (file.size < maxBsdiffSize && sourceFile.size < maxBsdiffSize):
 		// Use bsdiff to generate delta
 		if err := g.generateForFileWithBsdiff(info); err != nil {
 			return err
 		}
-	} else if info.rollsumMatches != nil && info.rollsumMatches.matchRatio > 20 {
+	case info.rollsumMatches != nil && info.rollsumMatches.matchRatio > 20:
 		// Use rollsums to generate delta
 		if err := g.generateForFileWithrollsums(info); err != nil {
 			return err
 		}
-	} else {
+	default:
 		if err := g.copyRest(); err != nil {
 			return err
 		}
@@ -223,9 +224,8 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 			if err == io.EOF {
 				// Expected error
 				break
-			} else {
-				return err
 			}
+			return err
 		}
 
 		info := g.analysis.targetInfoByIndex[index]
@@ -257,19 +257,23 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 	return nil
 }
 
+// Options configures the behavior of the diff operation.
 type Options struct {
 	compressionLevel int
 	maxBsdiffSize    int64
 }
 
+// SetCompressionLevel sets the compression level for the output diff file.
 func (o *Options) SetCompressionLevel(compressionLevel int) {
 	o.compressionLevel = compressionLevel
 }
 
+// SetMaxBsdiffFileSize sets the maximum file size for bsdiff operations.
 func (o *Options) SetMaxBsdiffFileSize(maxBsdiffSize int64) {
 	o.maxBsdiffSize = maxBsdiffSize
 }
 
+// NewOptions creates a new Options struct with default values.
 func NewOptions() *Options {
 	return &Options{
 		compressionLevel: 3,
@@ -277,6 +281,7 @@ func NewOptions() *Options {
 	}
 }
 
+// Diff creates a binary difference between two tar archives.
 func Diff(oldTarFile io.ReadSeeker, newTarFile io.ReadSeeker, diffFile io.Writer, options *Options) error {
 
 	if options == nil {

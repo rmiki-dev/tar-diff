@@ -1,3 +1,4 @@
+// Package main implements the tar-diff command line tool for creating binary diffs between tar archives.
 package main
 
 import (
@@ -7,8 +8,8 @@ import (
 	"os"
 	"path"
 
-	"github.com/containers/tar-diff/pkg/common"
-	tar_diff "github.com/containers/tar-diff/pkg/tar-diff"
+	"github.com/containers/tar-diff/pkg/protocol"
+	tardiff "github.com/containers/tar-diff/pkg/tar-diff"
 )
 
 var version = flag.Bool("version", false, "Show version")
@@ -26,7 +27,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Printf("%s %s\n", path.Base(os.Args[0]), common.VERSION)
+		fmt.Printf("%s %s\n", path.Base(os.Args[0]), protocol.VERSION)
 		return
 	}
 
@@ -44,37 +45,21 @@ func main() {
 		log.Fatalf("Error: %s", err)
 	}
 
-	defer func() {
-		if err := oldFile.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error closing %s: %s\n", oldFilename, err)
-		}
-	}()
-
 	newFile, err := os.Open(newFilename)
 	if err != nil {
 		log.Fatalf("Error: %s", err)
 	}
-	defer func() {
-		if err := newFile.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error closing %s: %s\n", newFilename, err)
-		}
-	}()
 
 	deltaFile, err := os.Create(deltaFilename)
 	if err != nil {
 		log.Fatalf("Error: %s", err)
 	}
 
-	options := tar_diff.NewOptions()
+	options := tardiff.NewOptions()
 	options.SetCompressionLevel(*compressionLevel)
 	options.SetMaxBsdiffFileSize(int64(*maxBsdiffSize) * 1024 * 1024)
 
-	err = tar_diff.Diff(oldFile, newFile, deltaFile, options)
-	if err != nil {
-		log.Fatalf("Error: %s", err)
-	}
-
-	err = deltaFile.Close()
+	err = tardiff.Diff(oldFile, newFile, deltaFile, options)
 	if err != nil {
 		log.Fatalf("Error: %s", err)
 	}
