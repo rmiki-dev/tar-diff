@@ -1,6 +1,8 @@
 PROJECT := tar-diff
-VERSION := $(shell grep -oP 'VERSION\s*=\s*"\K[^"]+' pkg/common/version.go)
+VERSION := $(shell awk -F'"' '/var VERSION =/ {print $$2}' pkg/common/version.go)
 PROJ_TARBALL := $(PROJECT)_$(VERSION).tar.gz
+GOCOVERDIR := $(CURDIR)/test/coverage
+
 
 .PHONY: all build clean fmt install lint test tools dist unit-test integration-test validate .install.golangci-lint
 
@@ -32,7 +34,9 @@ $(PROJ_TARBALL):
 	git archive --prefix=tar-diff_$(VERSION)/ --format=tar.gz HEAD --output $(PROJ_TARBALL) 
 
 build:
-	go build $(GOFLAGS) ./...
+	mkdir -p $(GOCOVERDIR)
+	go build $(GOFLAGS) -cover -o tar-diff ./cmd/tar-diff
+	go build $(GOFLAGS) -cover -o tar-patch ./cmd/tar-patch
 
 tar-diff:
 	go build $(GOFLAGS) ./cmd/tar-diff
@@ -55,12 +59,17 @@ tools: .install.golangci-lint
 clean:
 	rm -f tar-diff tar-patch
 	rm -rf $(PROJECT)_$(VERSION) $(PROJ_TARBALL)
+	rm -rf $(GOCOVERDIR)
 
-integration-test: tar-diff tar-patch
-	tests/test.sh
+integration-test: build
+	GOCOVERDIR=$(GOCOVERDIR) tests/test.sh
+	go tool covdata percent -i=$(GOCOVERDIR)
+
 
 unit-test:
-	go test $(GOFLAGS) -cover ./...
+	mkdir -p $(GOCOVERDIR)
+	go test $(GOFLAGS) -coverprofile=$(GOCOVERDIR)/unit.out ./...
+	go tool cover -func=$(GOCOVERDIR)/unit.out
 
 test: unit-test integration-test
 
@@ -69,7 +78,7 @@ fmt:
 
 validate: lint
 	@go vet $(GOFLAGS) ./...
-	@test -z "$$(gofmt -s -l . | tee /dev/stderr)"
+	@if [ -n "$$WINDIR" ]; then echo "Skipping gofmt check on Windows"; else output=$$(gofmt -s -l .); test -z "$$output" || (echo "$$output"; exit 1); fi
 
 lint:
 	GOFLAGS=$(GOFLAGS) $(GOBIN)/golangci-lint run
