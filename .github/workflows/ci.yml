@@ -23,26 +23,30 @@ jobs:
         run: make
 
   test-fedora:
-    name: Build and test on Fedora latest
-    runs-on: ubuntu-latest
+    name: Build and test Fedora on multiple runners
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, ubuntu-24.04-arm] 
     container:
       image: quay.io/fedora/fedora:latest
       options: --user root
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
       - name: Install dependencies
         run: |
           dnf update -y
           dnf install -y golang make tar diffutils bzip2 gzip curl git which
       - name: Mark repo as safe for git
         run: git config --global --add safe.directory $GITHUB_WORKSPACE
-      - name: Check out repository
-        uses: actions/checkout@v6
       - name: Build and test
         run: make
+ 
   version-release:
     runs-on: ubuntu-latest
-    needs: [test-makefile, test-fedora]
-    if: github.event_name == 'push' && github.ref == 'main'
+    needs: [test-makefile, test-fedora, test-macos, test-windows]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Github app installation token
         uses: actions/create-github-app-token@v2
@@ -60,3 +64,40 @@ jobs:
         uses: cycjimmy/semantic-release-action@v6
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  test-macos:
+    name: Build and test on macOS
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ macos-latest, macos-26-intel ] 
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install golang make diffutils git grep gnu-tar
+      - name: Build and test
+        run: make
+
+
+  test-windows:
+    name: Build and test on Windows
+    runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: 0
+    strategy:
+      matrix:
+        os: [ windows-latest, windows-11-arm ]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      - name: Install dependencies
+        run: |
+          choco install -y make diffutils gzip bzip2 git
+      - name: Build and test
+        run: bash -c "make"

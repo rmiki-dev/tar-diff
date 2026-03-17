@@ -2,6 +2,33 @@
 
 set -e
 
+command -v gtar &>/dev/null && { shopt -s expand_aliases; alias tar=gtar; }
+
+
+ln_soft(){
+    local target="$1"
+    local link="$2"
+
+# Detect Windows
+    if [[ -n "$WINDIR" ]] || [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "msys2" ]]; then
+        touch "${target}"
+        powershell -Command "New-Item -ItemType SymbolicLink -Path '${link}' -Target '${target}' -Force"
+    else
+        ln -s "${target}" "${link}"
+    fi
+}
+ln_hard(){
+    local source="$1"
+    local link="$2"
+
+#Window detection
+    if [[ -n "$WINDIR" ]] || [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "msys2" ]]; then
+        powershell -Command "New-Item -ItemType HardLink -Path '${link}' -Value '${source}' -Force"
+    else
+        ln "${source}" "${link}"
+    fi
+}
+
 TEST_DIR=$(mktemp -d /tmp/test-tardiff-XXXXXX)
 
 create_orig () {
@@ -16,9 +43,14 @@ create_orig () {
     echo foo > data/dir1/foo.txt
     echo bar > data/dir1/bar.txt
     echo movedata > data/dir1/move.txt
-    ln -s not-exist data/broken
-    ln -s foo.txt data/dir1/symlink
-    ln data/dir1/foo.txt data/dir1/hardlink
+    
+    # Skip broken symlink on Windows: tar refuses to archive symlinks with non-existent targets
+    if [[ -z "$WINDIR" ]] && [[ "$OSTYPE" != "msys" ]] && [[ "$OSTYPE" != "msys2" ]]; then
+        ln_soft not-exist data/broken
+    fi
+    ln_soft foo.txt data/dir1/symlink
+    ln_hard data/dir1/foo.txt data/dir1/hardlink
+
 
     echo "PART1" > data/sparse
     dd of=data/sparse if=/dev/null bs=1024k seek=1 count=1 &> /dev/null
@@ -33,7 +65,7 @@ modify_orig () {
 
     mkdir -p $DIR
     # Extract old data
-    tar xf  $SRC -C $DIR
+    tar xf $SRC -C $DIR
     pushd $DIR &> /dev/null
 
     # Modify it
@@ -42,15 +74,15 @@ modify_orig () {
 
     echo bar >> data/dir1/bar.txt
     mv data/dir1/bar.txt data/dir1/bar.TXT # Rename we should pick up
-    ln data/dir1/foo.txt data/dir1/hardlink2 
+    ln_hard data/dir1/foo.txt data/dir1/hardlink2
 
     popd &> /dev/null
 }
 
 compress_tar () {
     FILE=$1
-    gzip --keep $FILE
-    bzip2 --keep $FILE
+    gzip -k $FILE
+    bzip2 -k $FILE
 }
 
 create_tar () {
