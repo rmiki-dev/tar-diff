@@ -65,7 +65,7 @@ clean:
 
 integration-test: build
 	GOCOVERDIR=$(GOCOVERDIR) tests/test.sh
-	go tool covdata percent -i=$(GOCOVERDIR)
+	go tool covdata percent -i=$(GOCOVERDIR) -o=$(GOCOVERDIR)/integration.out
 
 
 unit-test:
@@ -87,4 +87,3 @@ lint:
 
 dist: $(PROJ_TARBALL)
 	@echo "Created $(PROJ_TARBALL)"
-
