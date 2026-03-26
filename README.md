@@ -1,3 +1,5 @@
+[![codecov](https://codecov.io/gh/containers/tar-diff/graph/badge.svg)](https://codecov.io/gh/containers/tar-diff)
+
 # tar-diff
 
 `tar-diff` is a golang library and set of commandline tools to diff and patch tar files.

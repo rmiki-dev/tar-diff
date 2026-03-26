@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
@@ -21,6 +23,11 @@ jobs:
           sudo apt-get install -y make tar diffutils bzip2 gzip curl git
       - name: Run make
         run: make
+      - name: Upload results to Codecov 
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./test/coverage/integration.out, ./test/coverage/unit.out 
 
   test-fedora:
     name: Build and test Fedora on multiple runners
