@@ -27,7 +27,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./test/coverage/integration.out, ./test/coverage/unit.out 
+          files: ./test/coverage/integration.out,./test/coverage/unit.out 
 
   test-fedora:
     name: Build and test Fedora on multiple runners
