@@ -158,6 +158,13 @@ func (g *deltaGenerator) generateForFile(info *targetInfo) error {
 
 	maxBsdiffSize := g.options.maxBsdiffSize
 
+	// For files that are smaller than the path to the delta source plus some small
+	// space for the delta header, skip doing deltas, as delta data will be larger
+	// than the content.
+	if file.size <= int64(len(sourceFile.paths[0])+4) {
+		return nil
+	}
+
 	switch {
 	case sourceFile.sha1 == file.sha1 && sourceFile.size == file.size:
 		// Reuse exact file from old tar
