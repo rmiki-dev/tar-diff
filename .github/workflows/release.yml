@@ -1,7 +1,9 @@
 name: Release
 
 on:
-  workflow_dispatch:  # Triggered by semantic-release via gh CLI
+  release:
+    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
