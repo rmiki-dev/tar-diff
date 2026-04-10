@@ -64,6 +64,10 @@ func (d *deltaWriter) Close() error {
 	if d.writer == nil {
 		return nil
 	}
+	// Flush any buffered data before closing to prevent data loss
+	if err := d.FlushBuffer(); err != nil {
+		return err
+	}
 	err := d.writer.Close()
 	d.writer = nil
 	return err

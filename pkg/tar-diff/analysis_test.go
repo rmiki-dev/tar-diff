@@ -336,3 +336,422 @@ func TestAnalyzeForDelta_MatchViaHardlinkPath(t *testing.T) {
 		t.Errorf("Expected primary source path to be 'blobs/sha256/abc123', got %q", targetInfo.source.file.paths[0])
 	}
 }
+
+// Additional unit tests for comprehensive coverage
+
+func TestAbs(t *testing.T) {
+	tests := []struct {
+		input    int64
+		expected int64
+	}{
+		{10, 10},
+		{-10, 10},
+		{0, 0},
+		{-1, 1},
+		{1, 1},
+	}
+
+	for _, test := range tests {
+		result := abs(test.input)
+		if result != test.expected {
+			t.Errorf("abs(%d) = %d, expected %d", test.input, result, test.expected)
+		}
+	}
+}
+
+func TestAnalyzeForDeltaHardlinkChains(t *testing.T) {
+	// Test complex hardlink scenarios in delta analysis
+	oldEntries := []tarEntry{
+		{name: "base.txt", typeflag: tar.TypeReg, data: []byte("base content")},
+		{name: "old-link.txt", typeflag: tar.TypeLink, linkname: "base.txt"},
+	}
+	oldTar, err := createTestTar(oldEntries)
+	if err != nil {
+		t.Fatalf("Failed to create old tar: %v", err)
+	}
+
+	newEntries := []tarEntry{
+		{name: "base.txt", typeflag: tar.TypeReg, data: []byte("base content")},
+		{name: "old-link.txt", typeflag: tar.TypeLink, linkname: "base.txt"},
+		{name: "new-link1.txt", typeflag: tar.TypeLink, linkname: "base.txt"},
+		{name: "new-link2.txt", typeflag: tar.TypeLink, linkname: "base.txt"},
+	}
+	newTar, err := createTestTar(newEntries)
+	if err != nil {
+		t.Fatalf("Failed to create new tar: %v", err)
+	}
+
+	// Reset tar readers
+	if _, err := oldTar.Seek(0, 0); err != nil {
+		t.Fatalf("oldTar.Seek: %v", err)
+	}
+	if _, err := newTar.Seek(0, 0); err != nil {
+		t.Fatalf("newTar.Seek: %v", err)
+	}
+
+	oldInfo, err := analyzeTar(oldTar, false)
+	if err != nil {
+		t.Fatalf("analyzeTar (old) failed: %v", err)
+	}
+
+	newInfo, err := analyzeTar(newTar, false)
+	if err != nil {
+		t.Fatalf("analyzeTar (new) failed: %v", err)
+	}
+
+	if _, err := oldTar.Seek(0, 0); err != nil {
+		t.Fatalf("oldTar.Seek: %v", err)
+	}
+
+	analysis, err := analyzeForDelta(buildSourceAnalysis([]*tarInfo{oldInfo}, 1, nil), newInfo, []io.ReadSeeker{oldTar}, nil)
+	if err != nil {
+		t.Fatalf("analyzeForDelta failed: %v", err)
+	}
+	defer func() {
+		if err := analysis.Close(); err != nil {
+			t.Logf("Failed to close analysis: %v", err)
+		}
+	}()
+
+	// Should find hardlink info for the new hardlinks (indices 2 and 3)
+	for index := 2; index <= 3; index++ {
+		hlInfo, exists := analysis.targetInfoByIndex[index]
+		if !exists {
+			t.Errorf("Hardlink should be found in targetInfoByIndex at index %d", index)
+			continue
+		}
+		if hlInfo.hardlink == nil {
+			t.Errorf("targetInfo.hardlink should not be nil for index %d", index)
+		}
+	}
+}
+
+func TestAnalyzeTarDirectoriesAndSymlinks(t *testing.T) {
+	entries := []tarEntry{
+		{name: "dir/", typeflag: tar.TypeDir},
+		{name: "symlink", typeflag: tar.TypeSymlink, linkname: "target"},
+		{name: "file.txt", typeflag: tar.TypeReg, data: []byte("content")},
+	}
+	tarFile, err := createTestTar(entries)
+	if err != nil {
+		t.Fatalf("Failed to create test tar: %v", err)
+	}
+
+	info, err := analyzeTar(tarFile, false)
+	if err != nil {
+		t.Fatalf("analyzeTar failed: %v", err)
+	}
+
+	// Should only have 1 file (directories and symlinks ignored)
+	if len(info.files) != 1 {
+		t.Errorf("Expected 1 file, got %d", len(info.files))
+	}
+
+	if len(info.hardlinks) != 0 {
+		t.Errorf("Expected 0 hardlinks, got %d", len(info.hardlinks))
+	}
+}
+
+func TestAnalyzeTarDuplicateContent(t *testing.T) {
+	content := []byte("duplicate content")
+	entries := []tarEntry{
+		{name: "file1.txt", typeflag: tar.TypeReg, data: content},
+		{name: "file2.txt", typeflag: tar.TypeReg, data: content},
+		{name: "different.txt", typeflag: tar.TypeReg, data: []byte("different")},
+	}
+	tarFile, err := createTestTar(entries)
+	if err != nil {
+		t.Fatalf("Failed to create test tar: %v", err)
+	}
+
+	info, err := analyzeTar(tarFile, false)
+	if err != nil {
+		t.Fatalf("analyzeTar failed: %v", err)
+	}
+
+	// Should have 3 files, 0 hardlinks
+	if len(info.files) != 3 || len(info.hardlinks) != 0 {
+		t.Errorf("Expected 3 files and 0 hardlinks, got %d files and %d hardlinks",
+			len(info.files), len(info.hardlinks))
+	}
+
+	// Verify duplicate files have same SHA1
+	if info.files[0].sha1 != info.files[1].sha1 {
+		t.Error("Duplicate content files should have same SHA1")
+	}
+	if info.files[0].sha1 == info.files[2].sha1 {
+		t.Error("Different content file should have different SHA1")
+	}
+}
+
+func TestAnalyzeTarEmpty(t *testing.T) {
+	entries := []tarEntry{}
+	tarFile, err := createTestTar(entries)
+	if err != nil {
+		t.Fatalf("Failed to create test tar: %v", err)
+	}
+
+	info, err := analyzeTar(tarFile, false)
+	if err != nil {
+		t.Fatalf("analyzeTar failed: %v", err)
+	}
+
+	if len(info.files) != 0 {
+		t.Errorf("Expected 0 files, got %d", len(info.files))
+	}
+
+	if len(info.hardlinks) != 0 {
+		t.Errorf("Expected 0 hardlinks, got %d", len(info.hardlinks))
+	}
+}
+
+func TestAnalyzeTarMultipleHardlinks(t *testing.T) {
+	entries := []tarEntry{
+		{name: "original.txt", typeflag: tar.TypeReg, data: []byte("content")},
+		{name: "link1.txt", typeflag: tar.TypeLink, linkname: "original.txt"},
+		{name: "link2.txt", typeflag: tar.TypeLink, linkname: "original.txt"},
+	}
+	tarFile, err := createTestTar(entries)
+	if err != nil {
+		t.Fatalf("Failed to create test tar: %v", err)
+	}
+
+	info, err := analyzeTar(tarFile, false)
+	if err != nil {
+		t.Fatalf("analyzeTar failed: %v", err)
+	}
+
+	if len(info.files) != 1 || len(info.hardlinks) != 2 {
+		t.Errorf("Expected 1 file and 2 hardlinks, got %d files and %d hardlinks",
+			len(info.files), len(info.hardlinks))
+	}
+
+	// Verify hardlink targets point to original
+	for _, hl := range info.hardlinks {
+		if hl.linkname != "original.txt" {
+			t.Errorf("Hardlink %s should point to original.txt, got %s", hl.path, hl.linkname)
+		}
+	}
+}
+
+func TestIsDeltaCandidate(t *testing.T) {
+	tests := []struct {
+		name     string
+		file     *tarFileInfo
+		expected bool
+	}{
+		{
+			name:     "File with good size for delta",
+			file:     &tarFileInfo{size: 1024, basenames: []string{"file.txt"}},
+			expected: true,
+		},
+		{
+			name:     "File with xz extension",
+			file:     &tarFileInfo{size: 1024, basenames: []string{"archive.xz"}},
+			expected: false,
+		},
+		{
+			name:     "Large file suitable for delta",
+			file:     &tarFileInfo{size: 1024 * 1024, basenames: []string{"large.bin"}},
+			expected: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := isDeltaCandidate(test.file)
+			if result != test.expected {
+				t.Errorf("isDeltaCandidate() = %v, expected %v", result, test.expected)
+			}
+		})
+	}
+}
+
+func TestIsDeltaCandidateWithBz2(t *testing.T) {
+	file := &tarFileInfo{size: 1024, basenames: []string{"archive.bz2"}}
+
+	result := isDeltaCandidate(file)
+	if result {
+		t.Error("Expected isDeltaCandidate to return false for .bz2 file")
+	}
+}
+
+func TestIsSparseFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		hdr      *tar.Header
+		expected bool
+	}{
+		{
+			name:     "GNU sparse file",
+			hdr:      &tar.Header{Typeflag: tar.TypeGNUSparse},
+			expected: true,
+		},
+		{
+			name:     "Regular file with GNU sparse PAX records",
+			hdr:      &tar.Header{Typeflag: tar.TypeReg, PAXRecords: map[string]string{"GNU.sparse.major": "1"}},
+			expected: true,
+		},
+		{
+			name:     "Regular file without sparse records",
+			hdr:      &tar.Header{Typeflag: tar.TypeReg},
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := isSparseFile(test.hdr)
+			if result != test.expected {
+				t.Errorf("isSparseFile() = %v, expected %v", result, test.expected)
+			}
+		})
+	}
+}
+
+func TestNameIsSimilar(t *testing.T) {
+	tests := []struct {
+		name     string
+		fileA    *tarFileInfo
+		fileB    *tarFileInfo
+		expected bool
+	}{
+		{
+			name:     "Exact basename match",
+			fileA:    &tarFileInfo{basenames: []string{"file.txt"}},
+			fileB:    &tarFileInfo{basenames: []string{"file.txt"}},
+			expected: true,
+		},
+		{
+			name:     "No basename match",
+			fileA:    &tarFileInfo{basenames: []string{"file1.txt"}},
+			fileB:    &tarFileInfo{basenames: []string{"file2.txt"}},
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := nameIsSimilar(test.fileA, test.fileB, 0)
+			if result != test.expected {
+				t.Errorf("nameIsSimilar() = %v, expected %v", result, test.expected)
+			}
+		})
+	}
+}
+
+func TestNameIsSimilarWithFuzzy(t *testing.T) {
+	fileA := &tarFileInfo{basenames: []string{"file1.txt"}}
+	fileB := &tarFileInfo{basenames: []string{"file2.txt"}}
+
+	result := nameIsSimilar(fileA, fileB, 1)
+	// Verify that files with different prefixes before first "." don't match
+	if result {
+		t.Errorf("nameIsSimilar(%s, %s, 1) should be false: different prefixes", fileA.basenames[0], fileB.basenames[0])
+	}
+
+	// Verify symmetry - order shouldn't matter
+	if nameIsSimilar(fileB, fileA, 1) != result {
+		t.Error("nameIsSimilar should be symmetric")
+	}
+
+	// Test a case that should actually match with fuzzy -
+	// same prefix before first "." means similar file across versions
+	fileC := &tarFileInfo{basenames: []string{"libcurl.so.4.7.0"}}
+	fileD := &tarFileInfo{basenames: []string{"libcurl.so.4.8.0"}}
+	if !nameIsSimilar(fileC, fileD, 1) {
+		t.Errorf("nameIsSimilar(%s, %s, 1) should be true: same prefix 'libcurl.'", fileC.basenames[0], fileD.basenames[0])
+	}
+}
+
+func TestSizeIsSimilar(t *testing.T) {
+	tests := []struct {
+		name     string
+		fileA    *tarFileInfo
+		fileB    *tarFileInfo
+		expected bool
+	}{
+		{
+			name:     "Identical sizes",
+			fileA:    &tarFileInfo{size: 1000},
+			fileB:    &tarFileInfo{size: 1000},
+			expected: true,
+		},
+		{
+			name:     "Small files (always similar)",
+			fileA:    &tarFileInfo{size: 1000},
+			fileB:    &tarFileInfo{size: 50 * 1024},
+			expected: true,
+		},
+		{
+			name:     "Large files exceeding factor of 10",
+			fileA:    &tarFileInfo{size: 100 * 1024},
+			fileB:    &tarFileInfo{size: 1100 * 1024},
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := sizeIsSimilar(test.fileA, test.fileB)
+			if result != test.expected {
+				t.Errorf("sizeIsSimilar() = %v, expected %v", result, test.expected)
+			}
+		})
+	}
+}
+
+func TestUseTarFile(t *testing.T) {
+	tests := []struct {
+		name      string
+		hdr       *tar.Header
+		cleanPath string
+		expected  bool
+	}{
+		{
+			name:      "Regular file with valid path",
+			hdr:       &tar.Header{Typeflag: tar.TypeReg, Size: 100, Mode: 0644},
+			cleanPath: "valid/path.txt",
+			expected:  true,
+		},
+		{
+			name:      "Regular file with empty path",
+			hdr:       &tar.Header{Typeflag: tar.TypeReg, Size: 100},
+			cleanPath: "",
+			expected:  false,
+		},
+		{
+			name:      "Directory",
+			hdr:       &tar.Header{Typeflag: tar.TypeDir, Size: 0},
+			cleanPath: "valid/path",
+			expected:  false,
+		},
+		{
+			name:      "Empty regular file",
+			hdr:       &tar.Header{Typeflag: tar.TypeReg, Size: 0},
+			cleanPath: "valid/path.txt",
+			expected:  false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := useTarFile(test.hdr, test.cleanPath)
+			if result != test.expected {
+				t.Errorf("useTarFile() = %v, expected %v", result, test.expected)
+			}
+		})
+	}
+}
+
+func TestUseTarFileWithoutWorldReadPermission(t *testing.T) {
+	// Mode 0600 = owner read+write, but not world-readable (no other-read bit set)
+	// useTarFile checks (hdr.Mode & 00004) == 0, which tests the world-readable bit
+	hdr := &tar.Header{Typeflag: tar.TypeReg, Size: 100, Mode: 0600}
+	cleanPath := "valid/path.txt"
+
+	result := useTarFile(hdr, cleanPath)
+	if result {
+		t.Error("Expected useTarFile to return false for file without world-read permission (other-readable)")
+	}
+}

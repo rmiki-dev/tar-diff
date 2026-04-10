@@ -253,11 +253,7 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 	if _, err := io.Copy(io.Discard, stealingTarFile); err != nil {
 		return err
 	}
-	// Flush any outstanding stolen data
-	err = deltaWriter.FlushBuffer()
-	if err != nil {
-		return err
-	}
+	// Close automatically flushes any buffered data
 	err = deltaWriter.Close()
 	if err != nil {
 		return err

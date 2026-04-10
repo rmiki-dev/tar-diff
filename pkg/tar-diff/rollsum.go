@@ -161,6 +161,15 @@ type rollsumMatches struct {
 }
 
 func computeRollsumMatches(from []rollsumBlob, to []rollsumBlob) *rollsumMatches {
+	// Handle empty 'to' slice to avoid divide by zero
+	if len(to) == 0 {
+		return &rollsumMatches{
+			matches:    make([]rollsumMatch, 0),
+			matchRatio: 0,
+			matchSize:  0,
+		}
+	}
+
 	fromByCrc := makeCrcMap(from)
 
 	nMatches := 0
