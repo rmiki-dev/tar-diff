@@ -33,9 +33,15 @@ type hardlinkInfo struct {
 	header   *tar.Header
 }
 
+type whiteoutEntry struct {
+	path   string // target path for specific whiteout, or directory prefix for opaque
+	opaque bool
+}
+
 type tarInfo struct {
 	files     []tarFileInfo // no size=0 files
 	hardlinks []hardlinkInfo
+	whiteouts []whiteoutEntry
 }
 
 type targetInfo struct {
@@ -47,14 +53,20 @@ type targetInfo struct {
 
 type sourceInfo struct {
 	file               *tarFileInfo
-	usedForDelta       bool
-	offset             int64
 	sourceTarFileIndex int
+	sourcePath         string
+}
+
+// Per delta run information about each sourceInfo
+type sourceDataInfo struct {
+	usedForDelta bool
+	offset       int64
 }
 
 type deltaAnalysis struct {
 	targetInfos       []targetInfo
 	sourceInfos       []sourceInfo
+	sourceDataInfos   map[*sourceInfo]*sourceDataInfo
 	sourceData        *os.File
 	targetInfoByIndex map[int]*targetInfo
 }
@@ -117,7 +129,7 @@ func useTarFile(hdr *tar.Header, cleanPath string) bool {
 	return true
 }
 
-func analyzeTar(tarMaybeCompressed io.Reader) (*tarInfo, error) {
+func analyzeTar(tarMaybeCompressed io.Reader, applyWhiteouts bool) (*tarInfo, error) {
 	tarFile, _, err := compression.AutoDecompress(tarMaybeCompressed)
 	if err != nil {
 		return nil, err
@@ -130,6 +142,7 @@ func analyzeTar(tarMaybeCompressed io.Reader) (*tarInfo, error) {
 
 	files := make([]tarFileInfo, 0)
 	hardlinks := make([]hardlinkInfo, 0)
+	whiteouts := make([]whiteoutEntry, 0)
 	infoByPath := make(map[string]int) // map from path to index in 'files'
 
 	rdr := tar.NewReader(tarFile)
@@ -160,6 +173,26 @@ func analyzeTar(tarMaybeCompressed io.Reader) (*tarInfo, error) {
 			}
 			// Skip the content (hardlinks have no content)
 			continue
+		}
+
+		// Detect docker/OCI whiteout files
+		if applyWhiteouts {
+			basename := path.Base(pathname)
+			if strings.HasPrefix(basename, ".wh.") {
+				dir := path.Dir(pathname)
+				if basename == ".wh..wh..opq" {
+					if dir == "." {
+						dir = ""
+					} else {
+						dir += "/"
+					}
+					whiteouts = append(whiteouts, whiteoutEntry{path: dir, opaque: true})
+				} else {
+					targetName := strings.TrimPrefix(basename, ".wh.")
+					whiteouts = append(whiteouts, whiteoutEntry{path: path.Join(dir, targetName), opaque: false})
+				}
+				continue
+			}
 		}
 
 		// If a file is in the archive several times, mark it as overwritten so its not used for delta source
@@ -199,7 +232,7 @@ func analyzeTar(tarMaybeCompressed io.Reader) (*tarInfo, error) {
 		}
 	}
 
-	info := tarInfo{files: files, hardlinks: hardlinks}
+	info := tarInfo{files: files, hardlinks: hardlinks, whiteouts: whiteouts}
 	return &info, nil
 }
 
@@ -257,7 +290,7 @@ type indexKey struct {
 	entryIndex int
 }
 
-func extractDeltaData(tarMaybeCompressedFiles []io.ReadSeeker, sourceByIndex map[indexKey]*sourceInfo, dest *os.File) error {
+func extractDeltaData(tarMaybeCompressedFiles []io.ReadSeeker, sourceByIndex map[indexKey]*sourceInfo, sourceDataInfos map[*sourceInfo]*sourceDataInfo, dest *os.File) error {
 	offset := int64(0)
 
 	for fileIndex, tarMaybeCompressed := range tarMaybeCompressedFiles {
@@ -282,11 +315,14 @@ func extractDeltaData(tarMaybeCompressedFiles []io.ReadSeeker, sourceByIndex map
 				return err
 			}
 			info := sourceByIndex[indexKey{fileIndex: fileIndex, entryIndex: index}]
-			if info != nil && info.usedForDelta {
-				info.offset = offset
-				offset += hdr.Size
-				if _, err := io.Copy(dest, rdr); err != nil {
-					return err
+			if info != nil {
+				sdi := sourceDataInfos[info]
+				if sdi != nil && sdi.usedForDelta {
+					sdi.offset = offset
+					offset += hdr.Size
+					if _, err := io.Copy(dest, rdr); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -301,24 +337,43 @@ func abs(n int64) int64 {
 	return n
 }
 
-func buildSourceInfos(oldInfos []*tarInfo) []sourceInfo {
+func buildSourceAnalysis(oldInfos []*tarInfo, numOldFiles int, options *Options) *SourceAnalysis {
+	if options == nil {
+		options = NewOptions()
+	}
 	sourceInfos := make([]sourceInfo, 0)
 	pathToFileIndex := make(map[string]int)
 
 	for fileIdx, oldInfo := range oldInfos {
+		// Apply whiteouts from this layer to sources from earlier layers
+		for _, wo := range oldInfo.whiteouts {
+			if wo.opaque {
+				for p := range pathToFileIndex {
+					if hasPathPrefix(p, wo.path) {
+						delete(pathToFileIndex, p)
+					}
+				}
+			} else {
+				delete(pathToFileIndex, wo.path)
+			}
+		}
+
 		for i := range oldInfo.files {
 			file := &oldInfo.files[i]
 
-			// Check if any path from this file conflicts with existing files
+			// Remove any paths from this file that conflict with
+			// existing sources from earlier layers
 			for _, p := range file.paths {
-				if existingIdx, exists := pathToFileIndex[p]; exists {
-					sourceInfos[existingIdx].file.overwritten = true
-				}
+				delete(pathToFileIndex, p)
 			}
 
-			// Add the primary path of this file (which is the one used as delta source)
 			currentFileIndex := len(sourceInfos)
-			pathToFileIndex[file.paths[0]] = currentFileIndex
+
+			// Register all paths of this file so whiteouts and
+			// overwrites from later layers can find them
+			for _, p := range file.paths {
+				pathToFileIndex[p] = currentFileIndex
+			}
 
 			sourceInfos = append(sourceInfos, sourceInfo{
 				file:               file,
@@ -327,7 +382,57 @@ func buildSourceInfos(oldInfos []*tarInfo) []sourceInfo {
 		}
 	}
 
-	return sourceInfos
+	// Now that all layers have been processed and pathToFileIndex
+	// reflects the final state, compute sourcePath for each source
+	// and build the lookup maps
+	sourceBySha1 := make(map[string]*sourceInfo)
+	sourceByPath := make(map[string]*sourceInfo)
+	sourceByIndex := make(map[indexKey]*sourceInfo)
+
+	for i := range sourceInfos {
+		s := &sourceInfos[i]
+
+		// Pick the first surviving path that passes prefix filters
+		for _, p := range s.file.paths {
+			if idx, exists := pathToFileIndex[p]; !exists || idx != i {
+				continue
+			}
+			if isIgnoredPrefix(p, options.ignoreSourcePrefixes) {
+				continue
+			}
+			if !matchesAnyPrefix(p, options.sourcePrefixes) {
+				continue
+			}
+			s.sourcePath = p
+			break
+		}
+
+		if s.sourcePath == "" {
+			s.file.overwritten = true
+			continue
+		}
+
+		sourceBySha1[s.file.sha1] = s
+		for _, p := range s.file.paths {
+			sourceByPath[p] = s
+		}
+		sourceByIndex[indexKey{fileIndex: s.sourceTarFileIndex, entryIndex: s.file.index}] = s
+	}
+
+	return &SourceAnalysis{
+		sourceInfos:   sourceInfos,
+		sourceBySha1:  sourceBySha1,
+		sourceByPath:  sourceByPath,
+		sourceByIndex: sourceByIndex,
+		numOldFiles:   numOldFiles,
+	}
+}
+
+func hasPathPrefix(s, prefix string) bool {
+	if !strings.HasPrefix(s, prefix) {
+		return false
+	}
+	return len(s) == len(prefix) || prefix == "" || strings.HasSuffix(prefix, "/") || s[len(prefix)] == '/'
 }
 
 func matchesAnyPrefix(path string, prefixes []string) bool {
@@ -335,22 +440,27 @@ func matchesAnyPrefix(path string, prefixes []string) bool {
 		return true
 	}
 	for _, prefix := range prefixes {
-		if strings.HasPrefix(path, prefix) {
+		if hasPathPrefix(path, prefix) {
 			return true
 		}
 	}
 	return false
 }
 
-func isDeltaSourceCandidate(s *sourceInfo, options *Options) bool {
-	if s.file.overwritten {
-		return false
+func isIgnoredPrefix(path string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if hasPathPrefix(path, prefix) {
+			return true
+		}
 	}
-	primaryPath := s.file.paths[0]
-	return matchesAnyPrefix(primaryPath, options.sourcePrefixes)
+	return false
 }
 
-func findFuzzyDeltaSource(sourceInfos []sourceInfo, targetFile *tarFileInfo, options *Options) *sourceInfo {
+func isDeltaSourceCandidate(s *sourceInfo) bool {
+	return s.sourcePath != ""
+}
+
+func findFuzzyDeltaSource(sourceInfos []sourceInfo, targetFile *tarFileInfo) *sourceInfo {
 	// Check for moved (first) or renamed (second) versions
 	for fuzzy := 0; fuzzy < 2; fuzzy++ {
 		var source *sourceInfo
@@ -358,7 +468,7 @@ func findFuzzyDeltaSource(sourceInfos []sourceInfo, targetFile *tarFileInfo, opt
 			s := &sourceInfos[j]
 
 			// Skip files that we're not allowed to use
-			if !isDeltaSourceCandidate(s, options) {
+			if !isDeltaSourceCandidate(s) {
 				continue
 			}
 			// Skip files that make no sense to delta (like compressed files)
@@ -387,36 +497,20 @@ func findFuzzyDeltaSource(sourceInfos []sourceInfo, targetFile *tarFileInfo, opt
 	return nil
 }
 
-func analyzeForDelta(oldInfos []*tarInfo, newTar *tarInfo, oldFiles []io.ReadSeeker, options *Options) (*deltaAnalysis, error) {
+func analyzeForDelta(sources *SourceAnalysis, newTar *tarInfo, oldFiles []io.ReadSeeker, options *Options) (*deltaAnalysis, error) {
 	if options == nil {
 		options = NewOptions()
 	}
 
-	sourceInfos := buildSourceInfos(oldInfos)
-
-	sourceBySha1 := make(map[string]*sourceInfo)
-	sourceByPath := make(map[string]*sourceInfo)
-	sourceByIndex := make(map[indexKey]*sourceInfo)
-	for i := range sourceInfos {
-		s := &sourceInfos[i]
-		if !isDeltaSourceCandidate(s, options) {
-			continue
-		}
-		sourceBySha1[s.file.sha1] = s
-		for _, p := range s.file.paths {
-			sourceByPath[p] = s
-		}
-		sourceByIndex[indexKey{fileIndex: s.sourceTarFileIndex, entryIndex: s.file.index}] = s
-	}
-
 	targetInfos := make([]targetInfo, 0, len(newTar.files)+len(newTar.hardlinks))
+	sourceDataInfos := make(map[*sourceInfo]*sourceDataInfo)
 
 	for i := range newTar.files {
 		file := &newTar.files[i]
 		// First look for exact content match
 		usedForDelta := false
 		var source *sourceInfo
-		sha1Source := sourceBySha1[file.sha1]
+		sha1Source := sources.sourceBySha1[file.sha1]
 		// If same sha1 and size, use original total size
 		if sha1Source != nil && file.size == sha1Source.file.size {
 			source = sha1Source
@@ -427,7 +521,7 @@ func analyzeForDelta(oldInfos []*tarInfo, newTar *tarInfo, oldFiles []io.ReadSee
 			// Check if any of the target file's paths match a source file
 			var s *sourceInfo
 			for _, p := range file.paths {
-				if matchedSource := sourceByPath[p]; matchedSource != nil {
+				if matchedSource := sources.sourceByPath[p]; matchedSource != nil {
 					s = matchedSource
 					break
 				}
@@ -437,7 +531,7 @@ func analyzeForDelta(oldInfos []*tarInfo, newTar *tarInfo, oldFiles []io.ReadSee
 				usedForDelta = true
 				source = s
 			} else {
-				source = findFuzzyDeltaSource(sourceInfos, file, options)
+				source = findFuzzyDeltaSource(sources.sourceInfos, file)
 				if source != nil {
 					usedForDelta = true
 				}
@@ -446,7 +540,12 @@ func analyzeForDelta(oldInfos []*tarInfo, newTar *tarInfo, oldFiles []io.ReadSee
 
 		var rollsumMatches *rollsumMatches
 		if source != nil {
-			source.usedForDelta = source.usedForDelta || usedForDelta
+			sdi := sourceDataInfos[source]
+			if sdi == nil {
+				sdi = &sourceDataInfo{}
+				sourceDataInfos[source] = sdi
+			}
+			sdi.usedForDelta = sdi.usedForDelta || usedForDelta
 
 			if usedForDelta {
 				rollsumMatches = computeRollsumMatches(source.file.blobs, file.blobs)
@@ -469,16 +568,16 @@ func analyzeForDelta(oldInfos []*tarInfo, newTar *tarInfo, oldFiles []io.ReadSee
 		targetInfoByIndex[hl.index] = &targetInfos[len(targetInfos)-1]
 	}
 
-	tmpfile, err := os.CreateTemp(os.TempDir(), "tar-diff-")
+	tmpfile, err := os.CreateTemp(options.tmpDir, "tar-diff-")
 	if err != nil {
 		return nil, err
 	}
 
-	err = extractDeltaData(oldFiles, sourceByIndex, tmpfile)
+	err = extractDeltaData(oldFiles, sources.sourceByIndex, sourceDataInfos, tmpfile)
 	if err != nil {
 		_ = os.Remove(tmpfile.Name())
 		return nil, err
 	}
 
-	return &deltaAnalysis{targetInfos: targetInfos, targetInfoByIndex: targetInfoByIndex, sourceInfos: sourceInfos, sourceData: tmpfile}, nil
+	return &deltaAnalysis{targetInfos: targetInfos, targetInfoByIndex: targetInfoByIndex, sourceInfos: sources.sourceInfos, sourceDataInfos: sourceDataInfos, sourceData: tmpfile}, nil
 }

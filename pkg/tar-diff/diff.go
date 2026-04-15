@@ -58,7 +58,8 @@ func (g *deltaGenerator) copyN(n int64) error {
 
 // Read back part of the stored data for the source file
 func (g *deltaGenerator) readSourceData(source *sourceInfo, offset int64, size int64) ([]byte, error) {
-	_, err := g.analysis.sourceData.Seek(int64(source.offset+offset), 0)
+	sdi := g.analysis.sourceDataInfos[source]
+	_, err := g.analysis.sourceData.Seek(int64(sdi.offset+offset), 0)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +72,7 @@ func (g *deltaGenerator) generateForFileWithBsdiff(info *targetInfo) error {
 	file := info.file
 	source := info.source
 
-	err := g.deltaWriter.SetCurrentFile(source.file.paths[0])
+	err := g.deltaWriter.SetCurrentFile(info.source.sourcePath)
 	if err != nil {
 		return err
 	}
@@ -105,7 +106,7 @@ func (g *deltaGenerator) generateForFileWithrollsums(info *targetInfo) error {
 	matches := info.rollsumMatches.matches
 	pos := int64(0)
 
-	err := g.deltaWriter.SetCurrentFile(source.file.paths[0])
+	err := g.deltaWriter.SetCurrentFile(info.source.sourcePath)
 	if err != nil {
 		return err
 	}
@@ -168,7 +169,7 @@ func (g *deltaGenerator) generateForFile(info *targetInfo) error {
 	switch {
 	case sourceFile.sha1 == file.sha1 && sourceFile.size == file.size:
 		// Reuse exact file from old tar
-		if err := g.deltaWriter.WriteOldFile(sourceFile.paths[0], uint64(sourceFile.size)); err != nil {
+		if err := g.deltaWriter.WriteOldFile(info.source.sourcePath, uint64(sourceFile.size)); err != nil {
 			return err
 		}
 
@@ -267,9 +268,12 @@ func generateDelta(newFile io.ReadSeeker, deltaFile io.Writer, analysis *deltaAn
 
 // Options configures the behavior of the diff operation.
 type Options struct {
-	compressionLevel int
-	maxBsdiffSize    int64
-	sourcePrefixes   []string
+	compressionLevel     int
+	maxBsdiffSize        int64
+	sourcePrefixes       []string
+	ignoreSourcePrefixes []string
+	tmpDir               string
+	applyWhiteouts       bool
 }
 
 // SetCompressionLevel sets the compression level for the output diff file.
@@ -288,70 +292,128 @@ func (o *Options) SetSourcePrefixes(prefixes []string) {
 	o.sourcePrefixes = prefixes
 }
 
+// SetTmpDir sets the directory for temporary files. Defaults to os.TempDir().
+func (o *Options) SetTmpDir(dir string) {
+	o.tmpDir = dir
+}
+
+// SetIgnoreSourcePrefixes sets path prefixes to exclude from delta sources.
+// Files whose paths all match one of these prefixes will not be used as delta sources.
+// If a file has multiple names (hardlinks), any non-ignored name makes the file usable.
+func (o *Options) SetIgnoreSourcePrefixes(prefixes []string) {
+	o.ignoreSourcePrefixes = prefixes
+}
+
+// SetApplyWhiteouts enables docker/OCI-style whiteout processing when analyzing
+// old tar layers. Whiteout files (.wh.<name> and .wh..wh..opq) in upper layers
+// remove matching paths from lower layers, so the delta sources reflect the
+// merged container image rather than individual layers.
+func (o *Options) SetApplyWhiteouts(apply bool) {
+	o.applyWhiteouts = apply
+}
+
 // NewOptions creates a new Options struct with default values.
 func NewOptions() *Options {
 	return &Options{
-		compressionLevel: 3,
-		maxBsdiffSize:    defaultMaxBsdiffSize,
-		sourcePrefixes:   nil,
+		compressionLevel:     3,
+		maxBsdiffSize:        defaultMaxBsdiffSize,
+		sourcePrefixes:       nil,
+		ignoreSourcePrefixes: nil,
 	}
 }
 
-// Diff creates a binary difference between a set of tar archives and a new tar archive
-// oldTarFiles contains one or more old tar files, in extraction order
-func Diff(oldTarFiles []io.ReadSeeker, newTarFile io.ReadSeeker, diffFile io.Writer, options *Options) error {
+// SourceAnalysis contains information about pre-analyzed delta sources.
+// It can be reused across multiple DiffWithSources calls, including
+// concurrent calls from different goroutines, as long as each call
+// provides its own independent set of old tar readers.
+type SourceAnalysis struct {
+	sourceInfos   []sourceInfo
+	sourceBySha1  map[string]*sourceInfo
+	sourceByPath  map[string]*sourceInfo
+	sourceByIndex map[indexKey]*sourceInfo
+	numOldFiles   int
+}
 
+// AnalyzeSources pre-computes analysis of one or more old tar files
+// that can be reused across multiple DiffWithSources operations.
+// oldTarFiles contains one or more old tar files, in extraction order.
+// The readers are only used during this call and are not retained.
+func AnalyzeSources(oldTarFiles []io.ReadSeeker, options *Options) (*SourceAnalysis, error) {
 	if options == nil {
 		options = NewOptions()
 	}
 
 	if len(oldTarFiles) == 0 {
-		return fmt.Errorf("at least one old tar file is required")
+		return nil, fmt.Errorf("at least one old tar file is required")
 	}
 
-	// First analyze all tarfiles by themselves
 	oldInfos := make([]*tarInfo, len(oldTarFiles))
 	for i, oldTarFile := range oldTarFiles {
-		oldInfo, err := analyzeTar(oldTarFile)
+		oldInfo, err := analyzeTar(oldTarFile, options.applyWhiteouts)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		oldInfos[i] = oldInfo
 	}
 
-	newInfo, err := analyzeTar(newTarFile)
+	return buildSourceAnalysis(oldInfos, len(oldTarFiles), options), nil
+}
+
+// DiffWithSources creates a binary difference using a pre-computed
+// SourceAnalysis. The oldTarFiles must correspond to the same tar
+// files (in the same order) that were passed to AnalyzeSources. If
+// they are independent readers then that allows concurrent calls from
+// multiple goroutines.
+func DiffWithSources(sources *SourceAnalysis, oldTarFiles []io.ReadSeeker, newTarFile io.ReadSeeker, diffFile io.Writer, options *Options) error {
+	if sources == nil {
+		return fmt.Errorf("sources cannot be nil")
+	}
+
+	if options == nil {
+		options = NewOptions()
+	}
+
+	if len(oldTarFiles) != sources.numOldFiles {
+		return fmt.Errorf("expected %d old tar files, got %d", sources.numOldFiles, len(oldTarFiles))
+	}
+
+	newInfo, err := analyzeTar(newTarFile, false)
 	if err != nil {
 		return err
 	}
 
-	// Reset tar.gz for re-reading
-	for _, oldTarFile := range oldTarFiles {
-		_, err = oldTarFile.Seek(0, 0)
-		if err != nil {
-			return err
-		}
-	}
-	_, err = newTarFile.Seek(0, 0)
-	if err != nil {
+	if _, err := newTarFile.Seek(0, 0); err != nil {
 		return err
 	}
 
-	// Compare new and old for delta information
-	analysis, err := analyzeForDelta(oldInfos, newInfo, oldTarFiles, options)
+	analysis, err := analyzeForDelta(sources, newInfo, oldTarFiles, options)
 	if err != nil {
 		return err
 	}
 
 	defer func() {
 		if err := analysis.Close(); err != nil {
-			log.Printf("close tar file: %v", err)
+			log.Printf("close analysis: %v", err)
 		}
 	}()
 
-	// Actually create the delta
-	if err := generateDelta(newTarFile, diffFile, analysis, options); err != nil {
+	return generateDelta(newTarFile, diffFile, analysis, options)
+}
+
+// Diff creates a binary difference between a set of tar archives and a new tar archive.
+// oldTarFiles contains one or more old tar files, in extraction order.
+func Diff(oldTarFiles []io.ReadSeeker, newTarFile io.ReadSeeker, diffFile io.Writer, options *Options) error {
+	sources, err := AnalyzeSources(oldTarFiles, options)
+	if err != nil {
 		return err
 	}
 
-	return nil
+	// Reset old files after AnalyzeSources read them
+	for _, oldTarFile := range oldTarFiles {
+		if _, err := oldTarFile.Seek(0, 0); err != nil {
+			return err
+		}
+	}
+
+	return DiffWithSources(sources, oldTarFiles, newTarFile, diffFile, options)
 }
