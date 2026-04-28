@@ -176,3 +176,43 @@ func TestDiff_NoPrefixFilter(t *testing.T) {
 		t.Errorf("Expected 3 files to have sources, got %d", sourcesFound)
 	}
 }
+
+func TestDiff_IgnoreSourcePrefix(t *testing.T) {
+	old, oldInfo, _, newInfo := setupPrefixFilterTestData(t)
+
+	options := NewOptions()
+	// Ignore blobs/ prefix - these files won't be used as delta sources
+	options.SetIgnoreSourcePrefixes([]string{"blobs/"})
+
+	analysis, err := analyzeForDelta(buildSourceAnalysis([]*tarInfo{oldInfo}, 1, options), newInfo, []io.ReadSeeker{old}, nil)
+	if err != nil {
+		t.Fatalf("analyzeForDelta failed: %v", err)
+	}
+	defer func() { _ = analysis.Close() }()
+
+	// Verify that blobs/ files are NOT used as delta sources
+	if len(analysis.targetInfos) != 3 {
+		t.Fatalf("Expected 3 target infos, got %d", len(analysis.targetInfos))
+	}
+
+	for i := range analysis.targetInfos {
+		target := &analysis.targetInfos[i]
+		if target.file == nil {
+			continue
+		}
+
+		fileName := target.file.paths[0]
+
+		if fileName == "blobs/sha256/abc123" {
+			// Should NOT have a source (ignored prefix means no match)
+			if target.source != nil {
+				t.Errorf("blobs/sha256/abc123 should have source=nil (ignored prefix), but got source=%v", target.source.file.paths[0])
+			}
+		} else {
+			// Other files (config, data) should still have sources
+			if target.source == nil {
+				t.Errorf("%s should have a source (not in ignored prefix list)", fileName)
+			}
+		}
+	}
+}
