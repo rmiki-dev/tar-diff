@@ -47,8 +47,8 @@ modify_orig "$TEST_DIR/modified" "$TEST_DIR/orig.tar"
 create_tar "$TEST_DIR/modified.tar" "$TEST_DIR/modified"
 
 # old1: full tree minus every peeled file
-cp -dR --no-preserve=context "$TEST_DIR/orig" "$TEST_DIR/mo-base" 2>/dev/null \
-	|| cp -dR "$TEST_DIR/orig" "$TEST_DIR/mo-base"
+cp -RP --no-preserve=context "$TEST_DIR/orig" "$TEST_DIR/mo-base" 2>/dev/null \
+	|| cp -RP "$TEST_DIR/orig" "$TEST_DIR/mo-base"
 for rel in "${PEEL[@]}"; do
 	rm -f "$TEST_DIR/mo-base/data/$rel"
 done

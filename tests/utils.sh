@@ -5,8 +5,8 @@
 
 use_gnu_tar_if_available() {
     if command -v gtar &>/dev/null; then
-        shopt -s expand_aliases
-        alias tar=gtar
+        tar() { gtar "$@"; }
+        export -f tar
     fi
     return 0
 }
